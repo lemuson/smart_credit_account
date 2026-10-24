@@ -1,0 +1,83 @@
+name: smart-credit-ai
+
+x-ai-environment: &ai-environment
+  ENVIRONMENT: development
+  OLLAMA_BASE_URL: http://host.docker.internal:11434
+  OLLAMA_LLM_MODEL: qwen2.5:7b-instruct
+  OLLAMA_EMBEDDING_MODEL: qwen3-embedding:0.6b
+  LLM_TEMPERATURE: "0.2"
+  LLM_NUM_CTX: "8192"
+  LLM_TIMEOUT_SECONDS: "120"
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  RABBITMQ_PREFETCH_COUNT: "1"
+  AI_WORKER_CONCURRENCY: "1"
+  BACKEND_BASE_URL: http://mock-backend:8090
+  BACKEND_SERVICE_TOKEN: development-service-token
+  CHROMA_PATH: /service/data/chroma
+  KNOWLEDGE_BASE_PATH: /service/knowledge_base
+  RAG_TOP_K: "5"
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mock-backend:
+    build: .
+    command: ["uvicorn", "mock_backend.main:app", "--host", "0.0.0.0", "--port", "8090"]
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ai-api:
+    build: .
+    environment: *ai-environment
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+    volumes:
+      - chroma-data:/service/data/chroma
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mock-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  ai-worker:
+    build: .
+    command: ["faststream", "run", "app.messaging.worker:app"]
+    environment: *ai-environment
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - chroma-data:/service/data/chroma
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mock-backend:
+        condition: service_healthy
+    stop_grace_period: 35s
+
+volumes:
+  rabbitmq-data:
+  chroma-data:
+
