@@ -1,0 +1,159 @@
+generator_version: "1.0"
+n_rows: 20000
+generation_seed: 20261022
+split_seed: 20261023
+max_generation_batches: 20
+
+columns:
+  - age
+  - annual_revenue
+  - credit_history
+  - business_age_months
+  - loan_amount
+  - has_collateral
+  - loan_term_months
+  - approved
+
+feature_columns:
+  - age
+  - annual_revenue
+  - credit_history
+  - business_age_months
+  - loan_amount
+  - has_collateral
+  - loan_term_months
+
+ml_feature_allow_list:
+  - annual_revenue
+  - credit_history
+  - business_age_months
+  - loan_amount
+  - has_collateral
+  - loan_term_months
+
+business_stages:
+  - name: new
+    weight: 0.18
+    triangular: [0, 5, 11]
+  - name: developing
+    weight: 0.32
+    triangular: [12, 24, 35]
+  - name: stable
+    weight: 0.35
+    triangular: [36, 54, 83]
+  - name: mature
+    weight: 0.15
+    triangular: [84, 132, 240]
+
+age:
+  minimum: 18
+  maximum: 70
+  components:
+    - weight: 0.75
+      mean: 38
+      std: 9
+    - weight: 0.25
+      mean: 52
+      std: 8
+  max_resamples: 1000
+
+annual_revenue:
+  base: 1800000
+  business_age_coefficient: 0.38
+  noise_std: 0.74
+  minimum: 300000
+  maximum: 120000000
+  rounding: 10000
+
+credit_history:
+  categories: [good, average, bad, none]
+  probabilities_by_stage:
+    new: [0.18, 0.22, 0.10, 0.50]
+    developing: [0.32, 0.34, 0.14, 0.20]
+    stable: [0.45, 0.35, 0.14, 0.06]
+    mature: [0.53, 0.32, 0.13, 0.02]
+
+requested_load_ratio:
+  components:
+    - weight: 0.82
+      median: 0.28
+      sigma: 0.55
+    - weight: 0.18
+      median: 0.95
+      sigma: 0.45
+  minimum: 0.03
+  maximum: 2.50
+
+loan_amount:
+  minimum: 100000
+  maximum: 30000000
+  rounding: 10000
+
+loan_term:
+  allowed_months: [6, 12, 18, 24, 36, 48, 60]
+  intercept: 12
+  loan_coefficient: 9
+  excess_leverage_coefficient: 8
+  excess_leverage_threshold: 0.35
+  noise_std: 7
+
+collateral:
+  intercept: -2.00
+  loan_coefficient: 0.65
+  business_age_coefficient: 0.25
+  high_leverage_coefficient: 0.45
+  high_leverage_threshold: 0.60
+  long_term_coefficient: 0.25
+  long_term_threshold: 36
+
+target:
+  intercept: -0.20
+  history_effects:
+    good: 1.00
+    average: 0.20
+    bad: -1.35
+    none: -0.20
+  revenue_coefficient: 0.25
+  revenue_reference: 3000000
+  revenue_scale: 1.20
+  business_age_coefficient: 0.55
+  business_age_center: 18
+  business_age_scale: 30
+  leverage_coefficient: -0.85
+  leverage_reference: 0.35
+  payment_load_coefficient: -0.55
+  payment_load_reference: 0.18
+  collateral_coefficient: 0.38
+  long_term_coefficient: -0.18
+  long_term_threshold: 48
+  collateral_high_load_interaction: 0.22
+  bad_history_high_load_interaction: -0.45
+  new_business_high_load_interaction: -0.30
+  new_business_threshold: 12
+  high_load_start: 0.35
+  high_load_width: 0.65
+
+split:
+  train: 14000
+  validation: 3000
+  test: 3000
+
+statistical_ranges:
+  approval_rate: [0.52, 0.60]
+  credit_history:
+    good: [0.34, 0.40]
+    average: [0.29, 0.35]
+    bad: [0.10, 0.16]
+    none: [0.15, 0.22]
+  collateral_share: [0.22, 0.31]
+  median_annual_revenue: [2700000, 3500000]
+  median_loan_amount: [850000, 1250000]
+  median_loan_to_revenue: [0.28, 0.38]
+  max_loan_to_revenue: 2.6
+  age_target_correlation_alert: 0.05
+
+stability:
+  additional_seeds: [20261023, 20261024, 20261025, 20261026, 20261027]
+  max_rate_delta: 0.02
+  max_median_relative_delta: 0.05
+  max_p90_relative_delta: 0.10

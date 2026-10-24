@@ -1,0 +1,18 @@
+This prototype uses third-party open-source software installed from pyproject.toml/uv.lock.
+
+Key runtime components:
+- FastAPI — MIT License
+- FastStream — Apache License 2.0
+- ChromaDB — Apache License 2.0
+- Ollama Python client — MIT License
+- HTTPX — BSD-3-Clause License
+- Pydantic and pydantic-settings — MIT License
+- pypdf — BSD-3-Clause License
+- Uvicorn — BSD-3-Clause License
+
+The complete dependency graph and exact versions are recorded in uv.lock. This notice does not
+change or replace the license text distributed by each dependency.
+
+Model weights are not redistributed by this repository. Users download Ollama models separately
+and must comply with the license and acceptable-use terms shown by the model distributor.
+

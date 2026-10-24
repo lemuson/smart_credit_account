@@ -1,0 +1,47 @@
+training_version: "1.0"
+random_seed: 20261030
+threshold: 0.5
+
+features:
+  - annual_revenue
+  - credit_history
+  - business_age_months
+  - loan_amount
+  - has_collateral
+  - loan_term_months
+target: approved
+
+validation_partition:
+  model_selection_fraction: 0.40
+  calibration_fit_fraction: 0.30
+  calibration_evaluation_fraction: 0.30
+
+logistic_regression:
+  C: 1.0
+  max_iter: 2000
+  solver: lbfgs
+
+catboost:
+  loss_function: Logloss
+  eval_metric: AUC
+  early_stopping_rounds: 60
+  thread_count: 2
+  candidates:
+    - {iterations: 300, depth: 4, learning_rate: 0.05, l2_leaf_reg: 3.0}
+    - {iterations: 500, depth: 4, learning_rate: 0.03, l2_leaf_reg: 5.0}
+    - {iterations: 400, depth: 5, learning_rate: 0.05, l2_leaf_reg: 5.0}
+    - {iterations: 500, depth: 6, learning_rate: 0.03, l2_leaf_reg: 7.0}
+    - {iterations: 300, depth: 6, learning_rate: 0.07, l2_leaf_reg: 5.0}
+
+calibration:
+  methods: [uncalibrated, sigmoid, isotonic]
+  n_bins: 10
+  maximum_roc_auc_degradation: 0.005
+
+subgroups:
+  minimum_size: 100
+
+artifacts:
+  models_dir: ml_scoring/models
+  reports_dir: ml_scoring/reports
+  figures_dir: ml_scoring/reports/figures/modeling
