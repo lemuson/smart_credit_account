@@ -1,0 +1,17 @@
+# Compose 2.20+; the backend keeps its existing secrets and PostgreSQL volume.
+name: smart-credit
+include:
+  - path: backend/compose.yaml
+    env_file: backend/.env
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

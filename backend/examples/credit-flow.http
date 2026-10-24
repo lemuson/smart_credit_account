@@ -1,0 +1,261 @@
+# JetBrains HTTP Client. Выполняйте запросы последовательно.
+# КМ создаётся заранее командой: python -m app.cli create-user --email officer@example.com --role BANK_OFFICER
+# Введите в CLI тот же учебный пароль, что указан ниже.
+@base = http://127.0.0.1:8000/api/v1
+@email = entrepreneur@example.com
+@officerEmail = officer@example.com
+@password = demo-password-123
+
+### 1. Регистрация клиента (при повторном запуске 409 допустим)
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"email":"{{email}}","password":"{{password}}"}
+
+### 2. Авторизация клиента
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"email":"{{email}}","password":"{{password}}"}
+
+> {% client.global.set("clientToken", response.body.access_token); %}
+
+### 3. Авторизация КМ
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"email":"{{officerEmail}}","password":"{{password}}"}
+
+> {% client.global.set("officerToken", response.body.access_token); %}
+
+### 4. Подстановка реквизитов (демо)
+GET {{base}}/auth/company/suggest/7700000009
+Authorization: Bearer {{clientToken}}
+
+### 5. Сохранение профиля. ИНН 7700000087 — предупреждения; 7700000094 — стоп-факторы.
+POST {{base}}/auth/company
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{
+  "company":{"name":"Учебное ООО","inn":"7700000009","registration_date":"2020-01-01","address":"Демонстрационный адрес","industry":"62.01"},
+  "financials":{"annual_revenue":"24000000","monthly_expenses":"500000","monthly_debt_payments":"0","outstanding_debt":"0","credit_history":"good","overdue_days":0,"has_collateral":false}
+}
+
+### 6. Выбор продукта (сначала выполните seed-products)
+GET {{base}}/catalog/products?purpose=working_capital&amount=1000000&term_months=24
+Authorization: Bearer {{clientToken}}
+
+> {% client.global.set("productId", response.body[0].id); %}
+
+### 7. Калькулятор
+POST {{base}}/catalog/calculate-preview
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{"product_id":"{{productId}}","amount":"1000000","term_months":24}
+
+### 8. Черновик. Для автозаполнения из конкретного старого кредита добавьте source_loan_id.
+POST {{base}}/client/applications
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{"product_id":"{{productId}}","purpose":"working_capital","amount":"1000000","term_months":24}
+
+> {% client.global.set("applicationId", response.body.id); client.global.set("version", response.body.version); %}
+
+### 9. Документ регистрации
+POST {{base}}/client/applications/{{applicationId}}/documents
+Authorization: Bearer {{clientToken}}
+Content-Type: multipart/form-data; boundary=credit-demo
+
+--credit-demo
+Content-Disposition: form-data; name="kind"
+
+registration
+--credit-demo
+Content-Disposition: form-data; name="expected_version"
+
+{{version}}
+--credit-demo
+Content-Disposition: form-data; name="file"; filename="demo.pdf"
+Content-Type: application/pdf
+
+< ./demo.pdf
+--credit-demo--
+
+### 10. Обновить версию (после каждой загрузки документа)
+GET {{base}}/client/applications/{{applicationId}}
+Authorization: Bearer {{clientToken}}
+
+> {% client.global.set("version", response.body.version); %}
+
+### 11. Финансовая отчетность
+POST {{base}}/client/applications/{{applicationId}}/documents
+Authorization: Bearer {{clientToken}}
+Content-Type: multipart/form-data; boundary=credit-demo
+
+--credit-demo
+Content-Disposition: form-data; name="kind"
+
+financial_statements
+--credit-demo
+Content-Disposition: form-data; name="expected_version"
+
+{{version}}
+--credit-demo
+Content-Disposition: form-data; name="file"; filename="demo.pdf"
+Content-Type: application/pdf
+
+< ./demo.pdf
+--credit-demo--
+
+### 12. Обновить версию
+GET {{base}}/client/applications/{{applicationId}}
+Authorization: Bearer {{clientToken}}
+
+> {% client.global.set("version", response.body.version); %}
+
+### 13. Банковская выписка
+POST {{base}}/client/applications/{{applicationId}}/documents
+Authorization: Bearer {{clientToken}}
+Content-Type: multipart/form-data; boundary=credit-demo
+
+--credit-demo
+Content-Disposition: form-data; name="kind"
+
+bank_statement
+--credit-demo
+Content-Disposition: form-data; name="expected_version"
+
+{{version}}
+--credit-demo
+Content-Disposition: form-data; name="file"; filename="demo.pdf"
+Content-Type: application/pdf
+
+< ./demo.pdf
+--credit-demo--
+
+### 14. Обновить версию
+GET {{base}}/client/applications/{{applicationId}}
+Authorization: Bearer {{clientToken}}
+
+> {% client.global.set("version", response.body.version); %}
+
+### 15. Проверка без изменения заявки
+POST {{base}}/applications/{{applicationId}}/validate
+Authorization: Bearer {{clientToken}}
+
+### 16. Подача
+POST {{base}}/client/applications/{{applicationId}}/submit
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}},"confirmed":true}
+
+> {% client.global.set("version", response.body.version); %}
+
+### 17. Очередь КМ
+GET {{base}}/bank/applications/queue?status=SUBMITTED
+Authorization: Bearer {{officerToken}}
+
+### 18. Взять в работу
+POST {{base}}/bank/applications/{{applicationId}}/take-to-work
+Authorization: Bearer {{officerToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}}}
+
+> {% client.global.set("version", response.body.version); %}
+
+### 19. Имитационные проверки
+POST {{base}}/bank/applications/{{applicationId}}/run-external-checks
+Authorization: Bearer {{officerToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}}}
+
+### 20. Обновить версию перед автоанализом
+GET {{base}}/bank/applications/{{applicationId}}/dossier
+Authorization: Bearer {{officerToken}}
+
+> {% client.global.set("version", response.body.version); %}
+
+### 21. Автоанализ (синхронный; промежуточный статус сохранён в истории)
+POST {{base}}/bank/applications/{{applicationId}}/pass-to-auto-analysis
+Authorization: Bearer {{officerToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}},"comment":"Комплектность и результаты проверены"}
+
+> {% client.global.set("version", response.body.version); %}
+
+### 22. Оффер и график
+GET {{base}}/client/applications/{{applicationId}}/offer
+Authorization: Bearer {{clientToken}}
+
+### 23. Принять оффер и получить договор
+POST {{base}}/client/applications/{{applicationId}}/offer/accept
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}}}
+
+> {% client.global.set("version", response.body.version); client.global.set("contractHash", response.body.contract.sha256); %}
+
+### 24. Просмотр договора
+GET {{base}}/client/applications/{{applicationId}}/contract
+Authorization: Bearer {{clientToken}}
+
+### 25. Демо-ПЭП (код действителен 15 минут)
+POST {{base}}/client/applications/{{applicationId}}/sign
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}},"code":"123456","contract_sha256":"{{contractHash}}"}
+
+> {% client.global.set("version", response.body.version); %}
+
+### 26. История кредитов
+GET {{base}}/client/loans
+Authorization: Bearer {{clientToken}}
+
+### 27. Персонализированная лента
+GET {{base}}/client/feed
+Authorization: Bearer {{clientToken}}
+
+### Ветка уточнения: выполните после взятия в работу, до автоанализа
+POST {{base}}/bank/applications/{{applicationId}}/request-clarification
+Authorization: Bearer {{officerToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}},"comment":"Уточните финансовые показатели","required_fields":["financials.monthly_expenses"],"required_documents":[]}
+
+> {% client.global.set("version", response.body.version); %}
+
+### Клиент редактирует анкету
+PUT {{base}}/client/applications/{{applicationId}}
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}},"financials":{"annual_revenue":"24000000","monthly_expenses":"600000","monthly_debt_payments":"0","outstanding_debt":"0","credit_history":"good","overdue_days":0,"has_collateral":false}}
+
+> {% client.global.set("version", response.body.version); %}
+
+### Ответ напрямую возвращает заявку в PRIMARY_REVIEW. Затем повторите проверки и автоанализ.
+POST {{base}}/client/applications/{{applicationId}}/clarify
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}},"response":"Расходы уточнены","confirmed":true}
+
+> {% client.global.set("version", response.body.version); %}
+
+### Ветка отказа клиента: выполните вместо принятия оффера, пока OFFER_READY
+POST {{base}}/client/applications/{{applicationId}}/offer/decline
+Authorization: Bearer {{clientToken}}
+Content-Type: application/json
+
+{"expected_version":{{version}}}
+
+> {% client.global.set("version", response.body.version); %}

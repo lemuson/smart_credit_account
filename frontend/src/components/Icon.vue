@@ -1,0 +1,77 @@
+<script setup>
+import {
+  Home,
+  Calculator,
+  WalletCards,
+  Sparkles,
+  ArrowUpRight,
+  ArrowRight,
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  Bell,
+  Search,
+  X,
+  Check,
+  FileText,
+  Download,
+  Upload,
+  Building2,
+  LogOut,
+  ShieldCheck,
+  Clock3,
+  CircleHelp,
+  Send,
+  RefreshCw,
+  Menu,
+  SlidersHorizontal,
+  CheckCircle2,
+  BriefcaseBusiness,
+  TrendingUp,
+  CircleDollarSign,
+  MoreHorizontal,
+  UserRound,
+} from "lucide-vue-next";
+defineProps({ name: String, size: { type: Number, default: 20 } });
+const icons = {
+  Home,
+  Calculator,
+  WalletCards,
+  Sparkles,
+  ArrowUpRight,
+  ArrowRight,
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  Bell,
+  Search,
+  X,
+  Check,
+  FileText,
+  Download,
+  Upload,
+  Building2,
+  LogOut,
+  ShieldCheck,
+  Clock3,
+  CircleHelp,
+  Send,
+  RefreshCw,
+  Menu,
+  SlidersHorizontal,
+  CheckCircle2,
+  BriefcaseBusiness,
+  TrendingUp,
+  CircleDollarSign,
+  MoreHorizontal,
+  UserRound,
+};
+</script>
+<template>
+  <component
+    :is="icons[name] || icons.CircleHelp"
+    :size="size"
+    :stroke-width="1.7"
+    aria-hidden="true"
+  />
+</template>
