@@ -32,6 +32,9 @@ class DatabaseSettings(BaseSettings):
 
 class Settings(DatabaseSettings):
     jwt_secret: SecretStr = Field(min_length=32)
+    ai_enabled: bool = False
+    ai_service_token: SecretStr | None = None
+    rabbitmq_url: SecretStr = SecretStr("amqp://guest:guest@localhost:5672/")
     token_minutes: int = Field(default=60, ge=1, le=1440)
     max_document_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=50 * 1024 * 1024)
 

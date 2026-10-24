@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.ai.router import router as chat_router
 from app.applications.router import bank_router, client_router, compat_router
 from app.auth.models import User
 from app.auth.router import admin_router
@@ -37,6 +38,7 @@ def create_app(settings=None, engine=None):
         lifespan=lifespan,
     )
     for router in (
+        chat_router,
         auth_router,
         admin_router,
         profile_router,

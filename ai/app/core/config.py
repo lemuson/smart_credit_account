@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     rabbitmq_max_attempts: int = Field(default=3, ge=1, le=10)
     rabbitmq_retry_delay_ms: int = Field(default=5000, ge=100)
 
+    backend_contract: Literal["mock", "main"] = "mock"
     backend_base_url: str = "http://localhost:8090"
     backend_service_token: SecretStr = SecretStr("development-service-token")
     backend_timeout_seconds: float = Field(default=10, gt=0)

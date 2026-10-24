@@ -19,19 +19,14 @@ class ProductDAO:
             .limit(limit)
         ).all()
 
-    def search(self, purpose, amount, term):
-        rows = self.session.scalars(
-            select(Product)
-            .where(
-                Product.active.is_(True),
-                Product.min_amount <= amount,
-                Product.max_amount >= amount,
-                Product.min_term_months <= term,
-                Product.max_term_months >= term,
-            )
-            .order_by(Product.annual_rate, Product.id)
-        ).all()
-        return [row for row in rows if purpose in row.purposes]
+    def search(self, purpose=None, amount=None, term=None):
+        query = select(Product).where(Product.active.is_(True))
+        if amount is not None:
+            query = query.where(Product.min_amount <= amount, Product.max_amount >= amount)
+        if term is not None:
+            query = query.where(Product.min_term_months <= term, Product.max_term_months >= term)
+        rows = self.session.scalars(query.order_by(Product.annual_rate, Product.id)).all()
+        return [row for row in rows if purpose is None or purpose in row.purposes]
 
     def create(self, data):
         product = Product(**data)

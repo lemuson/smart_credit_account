@@ -6,6 +6,8 @@ export function setToken(value) {
     : sessionStorage.removeItem("credit-token");
 }
 const messages = {
+  AI_DISABLED: "AI-помощник отключён. Проверьте настройки сервера.",
+  CONVERSATION_BUSY: "Дождитесь ответа на предыдущее сообщение.",
   INVALID_CREDENTIALS: "Неверная почта или пароль.",
   EMAIL_ALREADY_EXISTS: "Эта почта уже зарегистрирована.",
   APPLICATION_VERSION_CONFLICT:

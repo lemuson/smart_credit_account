@@ -1,0 +1,64 @@
+# Included by the root Compose; connects to the real Main Backend.
+services:
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: credit-ai
+      RABBITMQ_DEFAULT_PASS: ${AI_SERVICE_TOKEN:?Run ./start.sh to create AI_SERVICE_TOKEN}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  ai-bridge:
+    image: smart-credit-backend:local
+    build:
+      context: ../backend
+      target: production
+    command: ["python", "-m", "app.ai.worker"]
+    env_file: ../backend/.env
+    environment:
+      POSTGRES_HOST: db
+      AI_ENABLED: "true"
+      RABBITMQ_URL: amqp://credit-ai:${AI_SERVICE_TOKEN}@rabbitmq:5672/
+    healthcheck:
+      disable: true
+    depends_on:
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ai-worker:
+    build: .
+    command: ["faststream", "run", "app.messaging.worker:app"]
+    environment:
+      BACKEND_BASE_URL: http://api:8000
+      BACKEND_CONTRACT: main
+      BACKEND_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      RABBITMQ_URL: amqp://credit-ai:${AI_SERVICE_TOKEN}@rabbitmq:5672/
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:7b-instruct}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      CHROMA_PATH: /service/data/chroma
+      KNOWLEDGE_BASE_PATH: /service/knowledge_base
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - chroma_data:/service/data/chroma
+    depends_on:
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    stop_grace_period: 35s
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
+  chroma_data:

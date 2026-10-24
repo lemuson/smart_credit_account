@@ -1,7 +1,9 @@
 # Compose 2.20+; the backend keeps its existing secrets and PostgreSQL volume.
 name: smart-credit
 include:
-  - path: backend/compose.yaml
+  - path: [backend/compose.yaml, backend/compose.ai.yaml]
+    env_file: backend/.env
+  - path: ai/compose.integrated.yaml
     env_file: backend/.env
 
 services:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -60,7 +61,30 @@ class BackendClient:
         return response.json()
 
     async def get_user_profile(self, request: ChatRequest) -> dict[str, Any]:
-        return await self._request("GET", "/api/v1/profile", request)
+        payload = await self._request("GET", "/api/v1/profile", request)
+        if self._settings.backend_contract == "main":
+            company = payload["company"]
+            registered = date.fromisoformat(company["registration_date"]) if company else None
+            today = date.today()
+            age = (
+                (
+                    (today.year - registered.year) * 12
+                    + today.month
+                    - registered.month
+                    - (today.day < registered.day)
+                )
+                if registered
+                else 0
+            )
+            return {
+                "user_id": payload["user_id"],
+                "organization_id": payload["id"],
+                "business_name": company.get("name"),
+                "business_age_months": age,
+                "financials": payload["financials"],
+                "is_demo": True,
+            }
+        return payload
 
     async def search_credit_products(
         self,
@@ -70,6 +94,10 @@ class BackendClient:
         amount: str | None,
         term_months: int | None,
     ) -> list[dict[str, Any]]:
+        if self._settings.backend_contract == "main" and purpose:
+            purpose = self._purpose(purpose)
+            if purpose is None:
+                return []
         params = {
             k: v
             for k, v in {
@@ -82,10 +110,13 @@ class BackendClient:
         payload = await self._request(
             "GET", "/api/v1/credit-products/search", request, params=params
         )
+        if self._settings.backend_contract == "main":
+            return [self._product(item) for item in payload]
         return payload["items"]
 
     async def get_product_details(self, request: ChatRequest, product_id: str) -> dict[str, Any]:
-        return await self._request("GET", f"/api/v1/credit-products/{product_id}", request)
+        payload = await self._request("GET", f"/api/v1/credit-products/{product_id}", request)
+        return self._product(payload) if self._settings.backend_contract == "main" else payload
 
     async def get_application_status(
         self, request: ChatRequest, application_id: UUID
@@ -98,11 +129,43 @@ class BackendClient:
         payload = await self._request(
             "GET", f"/api/v1/credit-products/{product_id}/required-documents", request
         )
+        if self._settings.backend_contract == "main":
+            return [
+                {"code": code, "name": code, "required": True}
+                for code in payload["required_documents"]
+            ]
         return payload["items"]
+
+    @staticmethod
+    def _purpose(value: str) -> str | None:
+        value = value.casefold()
+        purposes = {
+            "working_capital": ("оборот",),
+            "equipment": ("оборуд", "техник"),
+            "expansion": ("расшир", "развит"),
+            "refinancing": ("рефинанс",),
+        }
+        for code, words in purposes.items():
+            if value == code or any(word in value for word in words):
+                return code
+        return None
+
+    @staticmethod
+    def _product(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **payload,
+            "product_id": payload["id"],
+            "annual_rate_percent": payload["annual_rate"],
+            "purpose": payload["purposes"],
+            "is_demo": payload["demonstration_only"],
+        }
 
     async def validate_application(
         self, request: ChatRequest, application_id: UUID
     ) -> dict[str, Any]:
-        return await self._request(
+        payload = await self._request(
             "POST", f"/api/v1/applications/{application_id}/validate", request
         )
+        if self._settings.backend_contract == "main":
+            return {**payload, "issues": payload["errors"], "decision": None, "is_demo": True}
+        return payload

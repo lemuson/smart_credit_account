@@ -4,6 +4,23 @@
 изменения оркестратора AI Service. Main Backend остаётся источником истины и единственным
 компонентом, который хранит пользователей, организации, продукты, заявки и историю диалога.
 
+## Подключение в этом репозитории
+
+Корневой `./start.sh` использует `compose.integrated.yaml`: RabbitMQ, основной backend,
+backend AI bridge и этот worker. `mock-backend` не запускается. Для worker заданы
+`BACKEND_BASE_URL=http://api:8000`, `BACKEND_CONTRACT=main` и отдельный `BACKEND_SERVICE_TOKEN`.
+Режим по умолчанию `BACKEND_CONTRACT=mock` сохранён для самостоятельного демо.
+Main adapter сопоставляет список продуктов, `annual_rate`, `required_documents`, `errors` и профиль
+с форматом инструментов; русские цели переводятся в enum backend по явному словарю.
+Неизвестная цель не снимает фильтр, а возвращает пустой подбор.
+
+Main Backend сохраняет outbox/inbox, историю и tenant ACL. В envelope 1.0 передаётся JWT
+делегирования на 10 минут, привязанный к `request_id`, вместо пользовательского access token.
+Backend проверяет отдельный shared service secret, audience, user/profile/job, заголовки контекста
+и allow-list read-only маршрутов. После завершения job токен не принимается.
+Это локальный сервисный контур; production требует отдельной workload identity, TLS и прав брокера.
+Подробности и HTTP chat API — в `backend/README.md`.
+
 ## Обязанности Main Backend
 
 Main Backend должен аутентифицировать пользователя, проверить его активную организацию, сформировать

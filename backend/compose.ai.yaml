@@ -1,0 +1,5 @@
+# Applied to the backend only when launched from the root stack.
+services:
+  api:
+    environment:
+      AI_ENABLED: "true"

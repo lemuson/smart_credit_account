@@ -1,12 +1,13 @@
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from app.auth.dependencies import Admin, CurrentUser
 from app.common import DB
 from app.products.schemas import ProductCreate, ProductRead, Purpose
 from app.products.service import ProductService
+from app.profiles.service import ProfileService
 
 router = APIRouter(prefix="/credit-products", tags=["credit-products"])
 
@@ -20,13 +21,17 @@ def list_products(
 
 @router.get("/search", response_model=list[ProductRead])
 def search_products(
+    request: Request,
     db: DB,
     user: CurrentUser,
-    purpose: Purpose,
-    amount: Decimal = Query(gt=0, max_digits=16, decimal_places=2),
-    term_months: int = Query(ge=1, le=360),
+    purpose: Purpose | None = None,
+    amount: Decimal | None = Query(None, gt=0, max_digits=16, decimal_places=2),
+    term_months: int | None = Query(None, ge=1, le=360),
 ):
-    return ProductService(db).search(purpose, amount, term_months)
+    profile = (
+        ProfileService(db).get(user.id) if getattr(request.state, "ai_delegated", False) else None
+    )
+    return ProductService(db).search(purpose, amount, term_months, profile)
 
 
 @router.post("", response_model=ProductRead, status_code=201)

@@ -21,7 +21,9 @@ flowchart LR
 
 Main Backend остаётся источником истины для профиля, каталога, заявок, прав и истории. AI Service
 не подключается к PostgreSQL, не меняет заявку, не отправляет её и не принимает кредитное решение.
-В локальной разработке роль Main Backend выполняет `mock_backend`.
+В самостоятельном демо роль Main Backend выполняет `mock_backend`. Корневой `./start.sh` запускает
+интегрированный контур с настоящим backend (`BACKEND_CONTRACT=main`); см.
+[контракт подключения](docs/backend_integration.md).
 
 ```mermaid
 sequenceDiagram

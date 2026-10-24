@@ -88,12 +88,21 @@ await page.screenshot({
 await page
   .getByRole("button", { name: "Чат с помощником", exact: false })
   .click();
+const chatSubmission = page.waitForResponse((response) =>
+  response.url().includes("/chat/conversations/") &&
+  response.url().endsWith("/messages") &&
+  response.request().method() === "POST",
+);
 await page
   .getByRole("button", { name: "Какие документы нужны для кредита?" })
   .click();
-await page
-  .getByText("Обычно нужны регистрационные документы", { exact: false })
-  .waitFor();
+const submittedChat = await chatSubmission;
+assert.equal(submittedChat.status(), 202);
+const chatJob = await submittedChat.json();
+// Generation is covered separately with a real AI Service and available Ollama models.
+assert.ok(chatJob.request_id);
+assert.ok(chatJob.conversation_id);
+await page.getByText("Какие документы нужны для кредита?", { exact: true }).last().waitFor();
 await page.setViewportSize({ width: 390, height: 844 });
 await page.getByRole("button", { name: "Главная", exact: true }).click();
 await page.screenshot({

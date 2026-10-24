@@ -58,6 +58,8 @@ const current = ref(null),
   comment = ref(""),
   signingCode = ref(""),
   requiredDocs = ref([]);
+const chatBusy = ref(false), chatConversation = ref(null);
+let chatGeneration = 0;
 const chatInput = ref(""),
   chats = ref([
     {
@@ -411,27 +413,82 @@ function showSchedule(offer) {
   preview.value = offer;
   modal.value = "schedule";
 }
-function assistant(text = chatInput.value) {
-  if (!text.trim()) return;
-  chats.value.push({ role: "user", text });
-  chatInput.value = "";
-  let answer =
-    "Для подбора кредита укажите цель, сумму и срок в кредитном калькуляторе. Подходящие продукты появятся ниже. Окончательные условия банк определит после проверки заявки.";
-  if (/документ|справк|выписк/i.test(text))
-    answer =
-      "Обычно нужны регистрационные документы, финансовая отчётность и выписка по счёту. Точный список указан в заявке для выбранного продукта. Загрузите PDF, PNG или JPEG до 10 МБ. При залоге понадобятся документы на обеспечение.";
-  else if (/статус|заявк|рассмотр/i.test(text))
-    answer = user.value
-      ? `В кабинете ${activeApplications.value.length} активных заявок. Откройте «Мои кредиты», чтобы посмотреть статус, замечания сотрудника и предложение банка. Если нужно уточнение, исправьте данные и отправьте их повторно.`
-      : "Войдите в кабинет и откройте «Мои кредиты». Там появятся ваши заявки, статусы рассмотрения и запросы на уточнение.";
-  else if (/ставк|плат[её]ж|процент/i.test(text))
-    answer =
-      "Предварительный платёж рассчитывается по аннуитетной схеме: равные ежемесячные платежи. Калькулятор показывает базовую ставку продукта. Индивидуальная ставка и доступная сумма появятся в предложении после оценки бизнеса.";
-  else if (/подпис|оформ|код/i.test(text))
-    answer =
-      "После одобрения откройте предложение и график платежей, примите условия, затем проверьте договор. В этом учебном сервисе используется демо-код 123456. Реальная электронная подпись и перевод денег не выполняются.";
-  chats.value.push({ role: "assistant", text: answer });
+function resetChat() {
+  chatGeneration++;
+  chatBusy.value = false;
+  chatConversation.value = null;
+  chats.value = [chats.value[0]];
+  if (user.value) sessionStorage.removeItem(`credit-chat-${user.value.id}`);
 }
+async function pollChat(requestId, generation) {
+  chatBusy.value = true;
+  try {
+    while (generation === chatGeneration) {
+      const job = await api(`/chat/requests/${requestId}`);
+      if (generation !== chatGeneration) return;
+      if (job.result) {
+        chats.value.push({ role: "assistant", text: job.result.answer });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  } catch (e) {
+    if (generation === chatGeneration) error.value = e.message;
+  } finally {
+    if (generation === chatGeneration) chatBusy.value = false;
+  }
+}
+async function assistant(text = chatInput.value) {
+  if (!text.trim() || chatBusy.value) return;
+  if (!user.value) {
+    error.value = "Войдите в кабинет, чтобы обратиться к AI-помощнику.";
+    return;
+  }
+  const generation = chatGeneration;
+  chatBusy.value = true;
+  try {
+    if (!chatConversation.value) {
+      const created = await api("/chat/conversations", { method: "POST" });
+      if (generation !== chatGeneration) return;
+      chatConversation.value = created.conversation_id;
+      sessionStorage.setItem(`credit-chat-${user.value.id}`, chatConversation.value);
+    }
+    const requestId = crypto.randomUUID();
+    const job = await api(`/chat/conversations/${chatConversation.value}/messages`, {
+      method: "POST", body: { request_id: requestId, message: text.trim() },
+    });
+    if (generation !== chatGeneration) return;
+    chats.value.push({ role: "user", text: job.message });
+    chatInput.value = "";
+    await pollChat(requestId, generation);
+  } catch (e) {
+    if (generation === chatGeneration) error.value = e.message;
+  } finally {
+    if (generation === chatGeneration) chatBusy.value = false;
+  }
+}
+watch(() => user.value?.id, async (id) => {
+  chatGeneration++;
+  const generation = chatGeneration;
+  chatBusy.value = false;
+  chats.value = [chats.value[0]];
+  chatConversation.value = id ? sessionStorage.getItem(`credit-chat-${id}`) : null;
+  if (!chatConversation.value) return;
+  try {
+    const jobs = await api(`/chat/conversations/${chatConversation.value}/messages`);
+    if (generation !== chatGeneration) return;
+    for (const job of jobs) {
+      chats.value.push({ role: "user", text: job.message });
+      if (job.result) chats.value.push({ role: "assistant", text: job.result.answer });
+    }
+    const pending = jobs.find((job) => !job.result);
+    if (pending) await pollChat(pending.request_id, generation);
+  } catch (e) {
+    if (generation === chatGeneration) error.value = e.message;
+  }
+});
+onUnmounted(() => { chatGeneration++; });
+
 function onHash() {
   const next = location.hash.slice(1);
   page.value = tabs.some((t) => t.id === next) ? next : "home";
@@ -1137,12 +1194,13 @@ onUnmounted(() => {
               <span class="quick-icon green"><Icon name="Sparkles" /></span>
               <div>
                 <strong>Альфа-помощник</strong
-                ><small><span class="live-dot"></span> Справочный режим</small>
+                ><small><span class="live-dot"></span> {{ chatBusy ? "Готовит ответ…" : "AI-помощник" }}</small>
               </div>
               <button
                 class="icon-btn"
                 aria-label="Очистить чат"
-                @click="chats = [chats[0]]"
+                @click="resetChat"
+                :disabled="chatBusy"
               >
                 <Icon name="RefreshCw" :size="18" />
               </button>
@@ -1168,14 +1226,13 @@ onUnmounted(() => {
               /><button
                 class="primary"
                 aria-label="Отправить сообщение"
-                :disabled="!chatInput.trim()"
+                :disabled="!chatInput.trim() || chatBusy"
               >
                 <Icon name="Send" :size="19" />
               </button>
             </form>
             <p class="chat-disclaimer">
-              Локальный справочный помощник. Генеративная модель не подключена;
-              ответы не являются решением банка.
+              AI может ошибаться. Ответы носят справочный характер и не являются решением банка.
             </p>
           </div>
           <aside class="panel suggestions">
