@@ -1,7 +1,7 @@
-from decimal import Decimal
-
 from app.database import now
 from app.loans.dao import LoanDAO
+from app.loans.obligations import credit_obligations
+from app.profiles.service import ProfileService
 
 
 def simulated_checks(application, session):
@@ -10,8 +10,11 @@ def simulated_checks(application, session):
     adverse = suffix >= 90
     warning = 80 <= suffix <= 89
     loans = LoanDAO(session).active(application.client_id)
-    stored_payment = sum((loan.monthly_payment for loan in loans), Decimal(0))
-    stored_debt = sum((loan.outstanding_balance for loan in loans), Decimal(0))
+    obligations = credit_obligations(
+        session,
+        application.client_id,
+        ProfileService(session).get(application.client_id).financials,
+    )
     overdue = max([loan.overdue_days for loan in loans] + [90 if adverse else 0])
     return {
         "provider": "deterministic_demo_v1",
@@ -29,22 +32,11 @@ def simulated_checks(application, session):
             "closed_loans": 2 if warning or adverse else 4,
             "current_overdue_days": overdue,
             "historical_overdue_days": 90 if adverse else 3 if warning else 0,
-            "monthly_payments": str(stored_payment),
-            "outstanding_debt": str(stored_debt),
+            "monthly_payments": obligations["total_monthly_payments"],
+            "outstanding_debt": obligations["total_outstanding_debt"],
+            **obligations,
             "source": "synthetic_fixture_and_local_loan_records",
         },
-        "discrepancies": [
-            code
-            for condition, code in [
-                (
-                    stored_payment > Decimal(application.financials["monthly_debt_payments"]),
-                    "UNDERSTATED_MONTHLY_PAYMENTS",
-                ),
-                (
-                    stored_debt > Decimal(application.financials["outstanding_debt"]),
-                    "UNDERSTATED_OUTSTANDING_DEBT",
-                ),
-            ]
-            if condition
-        ],
+        # Сведения о других банках заявлены в профиле, а не сверяются с кредитами нашего банка.
+        "discrepancies": [],
     }

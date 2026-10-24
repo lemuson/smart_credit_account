@@ -23,14 +23,26 @@ class ApplicationDAO:
 
     def list(self, user, status=None, offset=0, limit=50):
         query = select(Application)
+        query = query.where(Application.status != Status.DRAFT)
         if user.role == Role.CLIENT:
             query = query.where(Application.client_id == user.id)
-        else:
-            query = query.where(Application.status != Status.DRAFT)
         if status:
             query = query.where(Application.status == status)
         return self.session.scalars(
-            query.order_by(Application.created_at, Application.id).offset(offset).limit(limit)
+            query.order_by(Application.created_at.desc(), Application.id.desc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
+
+    def drafts(self, user):
+        return self.session.scalars(
+            select(Application)
+            .where(
+                Application.client_id == user.id,
+                Application.status == Status.DRAFT,
+                Application.data_revision > 1,
+            )
+            .order_by(Application.updated_at.desc(), Application.id.desc())
         ).all()
 
     def add(self, obj):
@@ -63,5 +75,5 @@ class ApplicationDAO:
         return self.session.scalars(
             select(AuditEvent)
             .where(AuditEvent.application_id == application_id)
-            .order_by(AuditEvent.created_at, AuditEvent.id)
+            .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
         ).all()

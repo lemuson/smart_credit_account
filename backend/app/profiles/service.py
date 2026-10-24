@@ -18,5 +18,10 @@ class ProfileService:
         profile.company = data.company.model_dump(mode="json")
         if data.financials is not None:
             profile.financials = data.financials.model_dump(mode="json")
+        if data.external_liabilities is not None:
+            profile.financials = {
+                **profile.financials,
+                **data.external_liabilities.model_dump(mode="json"),
+            }
         self.session.flush()
         return profile

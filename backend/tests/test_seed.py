@@ -42,7 +42,7 @@ def counts(session):
 def test_seed_once_and_login(seed_engine, database_url):
     with Session(seed_engine) as session, session.begin():
         assert seed_demo_data(session)
-        assert counts(session) == (3, 1, 3, 1, 1)
+        assert counts(session) == (3, 1, 3, 0, 1)
         user = session.scalar(select(User).where(User.email == "client@example.com"))
         user.active = False
         product = session.scalar(select(Product).limit(1))
@@ -51,7 +51,7 @@ def test_seed_once_and_login(seed_engine, database_url):
         profile = session.scalar(select(Profile))
         profile.company = {**profile.company, "name": "Изменённая компания"}
         session.execute(delete(AuditEvent))
-        session.delete(session.scalar(select(Application)))
+        assert session.scalar(select(Application)) is None
     with Session(seed_engine) as session, session.begin():
         assert not seed_demo_data(session)
         assert counts(session) == (3, 1, 3, 0, 1)
@@ -81,7 +81,7 @@ def test_seed_rollback_can_retry(seed_engine):
     with Session(seed_engine) as session, session.begin():
         assert counts(session) == (0, 0, 0, 0, 0)
         assert seed_demo_data(session)
-        assert counts(session) == (3, 1, 3, 1, 1)
+        assert counts(session) == (3, 1, 3, 0, 1)
 
 
 def test_seed_preserves_existing_account_and_product(seed_engine):
@@ -111,7 +111,7 @@ def test_seed_preserves_existing_account_and_product(seed_engine):
         assert (user.id, user.password_hash, user.role) == original
         assert not product.active
         assert str(product.annual_rate) == "21"
-        assert counts(session) == (3, 2, 3, 1, 1)
+        assert counts(session) == (3, 2, 3, 0, 1)
 
 
 def test_concurrent_seed_runs(seed_engine):
@@ -126,4 +126,4 @@ def test_concurrent_seed_runs(seed_engine):
         results = list(executor.map(lambda _: run(), range(2)))
     assert sorted(results) == [False, True]
     with Session(seed_engine) as session:
-        assert counts(session) == (3, 1, 3, 1, 1)
+        assert counts(session) == (3, 1, 3, 0, 1)

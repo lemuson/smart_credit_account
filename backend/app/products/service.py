@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from app.applications.decision import business_age, monthly_payment
 from app.common import fail
+from app.loans.obligations import credit_obligations
 from app.products.dao import ProductDAO
 
 
@@ -34,7 +35,11 @@ class ProductService:
             if row.collateral_required and not financials.get("has_collateral"):
                 continue
             if amount is not None and term is not None:
-                debt = Decimal(str(financials.get("monthly_debt_payments", 0)))
+                debt = Decimal(
+                    credit_obligations(self.dao.session, profile.user_id, financials)[
+                        "total_monthly_payments"
+                    ]
+                )
                 payment = monthly_payment(amount, row.annual_rate, term)
                 if revenue <= 0 or (debt + payment) / (revenue / 12) > row.max_debt_burden:
                     continue

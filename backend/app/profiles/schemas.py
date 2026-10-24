@@ -50,9 +50,15 @@ class Financials(Schema):
     has_collateral: bool
 
 
+class ExternalLiabilities(Schema):
+    monthly_debt_payments: Money = Field(ge=0, max_digits=16, decimal_places=2)
+    outstanding_debt: Money = Field(ge=0, max_digits=16, decimal_places=2)
+
+
 class ProfileUpdate(Schema):
     company: Company
     financials: Financials | None = None
+    external_liabilities: ExternalLiabilities | None = None
 
 
 class ProfileRead(Schema):
@@ -62,3 +68,4 @@ class ProfileRead(Schema):
     financials: dict
     updated_at: datetime
     version: int
+    credit_obligations: dict[str, str] = Field(default_factory=dict)

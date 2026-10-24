@@ -7,8 +7,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.applications.schemas import ApplicationCreate
-from app.applications.service import ApplicationService
 from app.auth.dao import UserDAO
 from app.auth.models import Role
 from app.auth.schemas import Register
@@ -106,15 +104,4 @@ def seed_demo_data(session) -> bool:
                     },
                 ),
             )
-            product = next((p for p in products if p.active), None)
-            if product is not None:
-                ApplicationService(session).create(
-                    ApplicationCreate(
-                        product_id=product.id,
-                        purpose=product.purposes[0],
-                        amount=product.min_amount,
-                        term_months=product.min_term_months,
-                    ),
-                    user,
-                )
     return True

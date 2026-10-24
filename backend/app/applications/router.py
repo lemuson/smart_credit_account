@@ -14,6 +14,9 @@ from app.applications.schemas import (
     ClarificationReply,
     DocumentRead,
     Dossier,
+    DraftCreate,
+    DraftUpdate,
+    FormValidation,
     ReviewAction,
     Sign,
     Submit,
@@ -23,7 +26,9 @@ from app.applications.schemas import (
 from app.applications.service import ApplicationService
 from app.auth.dependencies import Client, CurrentUser, Manager, require_client, require_manager
 from app.common import DB, fail
+from app.loans.obligations import credit_obligations
 from app.products.schemas import DocumentKind
+from app.profiles.schemas import ProfileRead
 
 client_router = APIRouter(
     prefix="/client/applications",
@@ -233,3 +238,50 @@ def status(application_id: UUID, db: DB, user: CurrentUser):
 def validate(application_id: UUID, db: DB, user: CurrentUser):
     service = ApplicationService(db)
     return service.validate(service.get(application_id, user))
+
+
+# Черновики доступны отдельно от списка отправленных заявок и не попадают в очередь банка.
+draft_router = APIRouter(
+    prefix="/client/application-drafts",
+    tags=["application-drafts"],
+    dependencies=[Depends(require_client)],
+)
+
+
+@draft_router.get("", response_model=list[ApplicationRead])
+def list_drafts(db: DB, user: Client):
+    return ApplicationService(db).dao.drafts(user)
+
+
+@draft_router.get("/prefill")
+def form_prefill(db: DB, user: Client, source_loan_id: UUID | None = None):
+    company, financials, source_id = ApplicationService(db).prefill(user, source_loan_id)
+    return {
+        "company": company,
+        "financials": financials,
+        "source_loan_id": source_id,
+        "credit_obligations": credit_obligations(db, user.id, financials),
+    }
+
+
+@draft_router.post("/validate")
+def validate_form(data: FormValidation, user: Client):
+    return {"valid": True}
+
+
+@draft_router.post("", response_model=Dossier, status_code=201)
+def create_draft(data: DraftCreate, db: DB, user: Client):
+    service = ApplicationService(db)
+    return service.dossier(service.create_draft(data, user), user)
+
+
+@draft_router.put("/{application_id}", response_model=Dossier)
+def save_draft(application_id: UUID, data: DraftUpdate, db: DB, user: Client):
+    service = ApplicationService(db)
+    return service.dossier(service.save_draft(service.get(application_id, user), data, user), user)
+
+
+@client_router.post("/{application_id}/sync-profile", response_model=ProfileRead)
+def sync_profile(application_id: UUID, data: VersionAction, db: DB, user: Client):
+    service = ApplicationService(db)
+    return service.sync_profile(service.get(application_id, user), data, user)

@@ -253,8 +253,10 @@ def test_loan_history_prefill_and_tenant_isolation(flow):
     assert draft.status_code == 201, draft.text
     flow.id = draft.json()["id"]
     assert draft.json()["company"] == company()
-    assert Decimal(draft.json()["financials"]["monthly_debt_payments"]) == Decimal("85000")
-    assert Decimal(draft.json()["financials"]["outstanding_debt"]) == Decimal("900000")
+    assert Decimal(draft.json()["financials"]["monthly_debt_payments"]) == Decimal("0")
+    assert Decimal(draft.json()["financials"]["outstanding_debt"]) == Decimal("0")
+    assert Decimal(flow.get()["credit_obligations"]["total_monthly_payments"]) == Decimal("85000")
+    assert Decimal(flow.get()["credit_obligations"]["total_outstanding_debt"]) == Decimal("900000")
     flow.submit_and_take()
     assert flow.action("run-external-checks", "officer").status_code == 200
     dossier = flow.get("officer")
@@ -373,7 +375,7 @@ def test_noop_save_preserves_revision_checks_and_single_draft(flow):
     assert flow.action("run-external-checks", "officer").status_code == 200
     client_view = flow.get()
     assert client_view["status"] == "PRIMARY_REVIEW"
-    assert sum(event["action"] == "DRAFT_CREATED" for event in client_view["history"]) == 1
+    assert sum(event["action"] == "DRAFT_CREATED" for event in client_view["history"]) == 0
     assert not any(event["action"] == "DOCUMENT_UPLOADED" for event in client_view["history"])
     listed = flow.api.get("/api/v1/client/applications", headers=flow.headers["client"]).json()
     assert len(listed) == 1 and listed[0]["id"] == flow.id

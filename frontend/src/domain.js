@@ -131,7 +131,9 @@ export function checkRows(results) {
     ["БКИ: закрытые кредиты", b.closed_loans ?? "Нет данных"],
     ["БКИ: текущая просрочка", days(b.current_overdue_days)],
     ["БКИ: максимальная прошлая просрочка", days(b.historical_overdue_days)],
-    ["БКИ: ежемесячные платежи", b.monthly_payments == null ? "Нет данных" : money(b.monthly_payments)],
+    ["Платежи по кредитам этого банка", b.bank_monthly_payments == null ? "Нет данных" : money(b.bank_monthly_payments)],
+    ["Платежи другим банкам (из профиля)", b.external_monthly_payments == null ? "Нет данных" : money(b.external_monthly_payments)],
+    ["Итого текущие ежемесячные платежи", b.monthly_payments == null ? "Нет данных" : money(b.monthly_payments)],
     ["БКИ: остаток долга", b.outstanding_debt == null ? "Нет данных" : money(b.outstanding_debt)],
   ];
 }

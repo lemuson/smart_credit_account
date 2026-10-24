@@ -143,3 +143,37 @@ class Dossier(ApplicationRead):
     checks: list[CheckRead]
     clarifications: list[ClarificationRead]
     history: list[AuditRead]
+    credit_obligations: dict[str, str] = Field(default_factory=dict)
+
+
+class DraftCompany(Schema):
+    name: str = Field(default="", max_length=250)
+    inn: str = Field(default="", max_length=12)
+    registration_date: str = Field(default="", max_length=10)
+    address: str = Field(default="", max_length=500)
+    industry: str = Field(default="", max_length=100)
+
+
+class DraftFinancials(Schema):
+    # Незавершённый ввод сохраняется; полная валидация выполняется перед переходом/отправкой.
+    annual_revenue: str = Field(default="", max_length=32)
+    monthly_expenses: str = Field(default="0", max_length=32)
+    credit_history: str = Field(default="none", max_length=10)
+    overdue_days: int | str = 0
+    has_collateral: bool = False
+
+
+class DraftCreate(ApplicationCreate):
+    draft_id: UUID
+    company: DraftCompany
+    financials: DraftFinancials
+
+
+class DraftUpdate(VersionAction):
+    company: DraftCompany
+    financials: DraftFinancials
+
+
+class FormValidation(Schema):
+    company: Company | None = None
+    financials: Financials | None = None

@@ -40,6 +40,7 @@ def test_history_hides_saves_uploads_and_client_internal_review(flow):
     actions = {event["action"] for event in client["history"]}
     assert actions.isdisjoint(
         {
+            "AUTOMATIC_DECISION",
             "APPLICATION_UPDATED",
             "DOCUMENT_UPLOADED",
             "DOCUMENT_DELETED",

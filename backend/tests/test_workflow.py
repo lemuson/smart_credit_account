@@ -35,13 +35,13 @@ def test_happy_path_disbursement_and_feed(flow):
     assert len(loans) == 1 and loans[0]["application_id"] == flow.id
     history = flow.get("officer")["history"]
     assert [event["to_status"] for event in history if event["from_status"]] == [
-        "SUBMITTED",
-        "PRIMARY_REVIEW",
-        "AUTOMATIC_ANALYSIS",
-        "OFFER_READY",
-        "OFFER_ACCEPTED",
-        "SIGNING",
         "DISBURSED",
+        "SIGNING",
+        "OFFER_ACCEPTED",
+        "OFFER_READY",
+        "AUTOMATIC_ANALYSIS",
+        "PRIMARY_REVIEW",
+        "SUBMITTED",
     ]
     feed = flow.api.get("/api/v1/client/feed", headers=flow.headers["client"])
     assert feed.status_code == 200

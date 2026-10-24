@@ -23,10 +23,11 @@ from app.auth.service import password_hash
 from app.common import fail
 from app.database import now
 from app.loans.dao import LoanDAO
+from app.loans.obligations import EXTERNAL_FIELDS, credit_obligations
 from app.loans.service import LoanService
 from app.products.schemas import ProductRead
 from app.products.service import ProductService
-from app.profiles.schemas import Company, Financials
+from app.profiles.schemas import Company, Financials, ProfileUpdate
 from app.profiles.service import ProfileService
 from app.risk.service import RiskPolicyService
 
@@ -87,15 +88,12 @@ class ApplicationService:
         self.audit(obj, user, action, previous, **details)
         self.session.flush()
 
-    def create(self, data, user):
-        product = ProductService(self.session).get(data.product_id)
-        if not product.active:
-            fail(409, "PRODUCT_INACTIVE")
+    def prefill(self, user, source_loan_id=None):
         profile = ProfileService(self.session).get(user.id)
         company, financials = dict(profile.company), dict(profile.financials)
         source_id = None
-        if data.source_loan_id:
-            source = LoanService(self.session).get(data.source_loan_id, user.id)
+        if source_loan_id:
+            source = LoanService(self.session).get(source_loan_id, user.id)
             # Свежий профиль имеет приоритет; история дополняет отсутствующие данные.
             company = {**source.company_snapshot, **company}
             financials = {**source.financials_snapshot, **financials}
@@ -106,21 +104,18 @@ class ApplicationService:
                 source_id = loans[0].id
                 company = {**loans[0].company_snapshot, **company}
                 financials = {**loans[0].financials_snapshot, **financials}
-        active_loans = LoanDAO(self.session).active(user.id)
-        if financials and active_loans:
-            financials["monthly_debt_payments"] = str(
-                max(
-                    Decimal(financials.get("monthly_debt_payments", "0")),
-                    sum((loan.monthly_payment for loan in active_loans), Decimal(0)),
-                )
-            )
-            financials["outstanding_debt"] = str(
-                max(
-                    Decimal(financials.get("outstanding_debt", "0")),
-                    sum((loan.outstanding_balance for loan in active_loans), Decimal(0)),
-                )
-            )
+        # Поля анкеты относятся только к другим банкам; текущий банк считаем отдельно.
+        for field in EXTERNAL_FIELDS:
+            financials[field] = profile.financials.get(field, "0")
+        return company, financials, source_id
+
+    def create(self, data, user, draft_id=None):
+        product = ProductService(self.session).get(data.product_id)
+        if not product.active:
+            fail(409, "PRODUCT_INACTIVE")
+        company, financials, source_id = self.prefill(user, data.source_loan_id)
         obj = Application(
+            **({"id": str(draft_id)} if draft_id else {}),
             client_id=user.id,
             product_id=product.id,
             purpose=data.purpose,
@@ -139,6 +134,11 @@ class ApplicationService:
     def update(self, obj, data, user):
         self.version(obj, data.expected_version)
         self.state(obj, EDITABLE)
+        if data.financials is not None:
+            profile = ProfileService(self.session).get(user.id)
+            for field in EXTERNAL_FIELDS:
+                if getattr(data.financials, field) != Decimal(profile.financials.get(field) or "0"):
+                    fail(422, "EXTERNAL_LIABILITIES_READ_ONLY")
         changed = []
         for field in data.model_fields_set - {"expected_version"}:
             value = getattr(data, field)
@@ -164,6 +164,57 @@ class ApplicationService:
             )
         self.session.flush()
         return obj
+
+    def save_draft(self, obj, data, user):
+        self.state(obj, {Status.DRAFT})
+        self.version(obj, data.expected_version)
+        profile = ProfileService(self.session).get(user.id)
+        company = data.company.model_dump(mode="json")
+        financials = data.financials.model_dump(mode="json")
+        financials.update({field: profile.financials.get(field, "0") for field in EXTERNAL_FIELDS})
+        try:
+            financials = Financials.model_validate(financials).model_dump(mode="json")
+        except ValidationError:
+            pass
+        if obj.company != company or obj.financials != financials:
+            obj.company, obj.financials = company, financials
+            obj.data_revision += 1
+            obj.updated_at = now()
+            self.audit(obj, user, "APPLICATION_UPDATED", data_revision=obj.data_revision)
+        self.session.flush()
+        return obj
+
+    def create_draft(self, data, user):
+        existing = self.session.get(Application, str(data.draft_id))
+        if existing:
+            self.get(existing.id, user)
+            self.state(existing, {Status.DRAFT})
+            return existing
+        obj = self.create(data, user, draft_id=data.draft_id)
+        from app.applications.schemas import DraftUpdate
+
+        return self.save_draft(
+            obj,
+            DraftUpdate(
+                expected_version=obj.version,
+                company=data.company,
+                financials=data.financials,
+            ),
+            user,
+        )
+
+    def sync_profile(self, obj, data, user):
+        self.version(obj, data.expected_version)
+        self.state(obj, EDITABLE)
+        profile_service = ProfileService(self.session)
+        profile = profile_service.get(user.id)
+        financials = {
+            **obj.financials,
+            **{field: profile.financials.get(field, "0") for field in EXTERNAL_FIELDS},
+        }
+        return profile_service.update(
+            user.id, ProfileUpdate(company=obj.company, financials=financials)
+        )
 
     def validate(self, obj):
         errors = []
@@ -450,6 +501,8 @@ class ApplicationService:
         hidden = {"APPLICATION_UPDATED", "DOCUMENT_UPLOADED", "DOCUMENT_DELETED"}
         if user.role == Role.CLIENT:
             hidden |= {
+                "DRAFT_CREATED",
+                "AUTOMATIC_DECISION",
                 "EXTERNAL_CHECKS_COMPLETED",
                 "PRIMARY_REVIEW_PASSED",
                 "AUTOMATIC_ANALYSIS_STARTED",
@@ -462,4 +515,9 @@ class ApplicationService:
             checks=self.dao.checks(obj.id) if user.role != Role.CLIENT else [],
             clarifications=self.dao.clarifications(obj.id),
             history=history,
+            credit_obligations=credit_obligations(
+                self.session,
+                obj.client_id,
+                ProfileService(self.session).get(obj.client_id).financials,
+            ),
         )

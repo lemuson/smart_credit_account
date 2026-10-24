@@ -20,6 +20,7 @@ const messages = {
   INVALID_SIGNING_CODE: "Неверный код подтверждения.",
   FRESH_EXTERNAL_CHECKS_REQUIRED: "Сначала запустите актуальные проверки.",
   UNRESOLVED_DISCREPANCIES: "Необходимо устранить несоответствия в данных.",
+  EXTERNAL_LIABILITIES_READ_ONLY: "Платежи и долг в других банках можно изменить только в профиле бизнеса. Откройте заявку заново после изменения профиля.",
   INVALID_APPLICATION_STATE: "Действие недоступно в текущем статусе заявки.",
 };
 export async function api(path, { method = "GET", body, raw = false } = {}) {

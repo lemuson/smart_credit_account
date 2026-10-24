@@ -35,7 +35,7 @@ try {
   await close(client);
   await client.getByRole("button", { name: "Оформить заявку", exact: false }).click();
   const dialog = client.getByRole("dialog");
-  const applicationId = (await dialog.innerText()).match(/ЗАЯВКА № ([A-F0-9]+)/)[1];
+  const draftResponse = client.waitForResponse((response) => response.url().endsWith("/client/application-drafts") && response.request().method() === "POST");
   await client.getByLabel("Название компании", { exact: true }).fill("ООО Регрессионная проверка");
   await client.getByLabel("ИНН", { exact: true }).fill("7700000001");
   await client.getByLabel("Дата регистрации", { exact: true }).fill("2020-01-15");
@@ -49,6 +49,7 @@ try {
   assert.ok(await client.getByText("Данные отличаются от профиля бизнеса", { exact: true }).isVisible());
   await client.getByLabel("Обновить профиль бизнеса данными этой заявки").check();
   await next(client);
+  const applicationId = (await (await draftResponse).json()).id.slice(0, 8).toUpperCase();
   await client.getByLabel("Годовая выручка, ₽", { exact: true }).fill("24000000");
   await client.getByLabel("Расходы в месяц, ₽", { exact: true }).fill("500000");
   assert.ok(await client.getByText("Данные отличаются от профиля бизнеса", { exact: true }).isVisible());
@@ -58,15 +59,17 @@ try {
     await input.setInputFiles({ name: "test.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\nsynthetic fixture") });
     await client.waitForFunction(() => !document.querySelector("input[type=file]")?.disabled);
   }
-  assert.equal(await client.getByText("Создан черновик", { exact: true }).count(), 1);
+  assert.equal(await client.getByText("Создан черновик", { exact: true }).count(), 0);
   assert.equal(await client.getByText("Загружен документ", { exact: true }).count(), 0);
   assert.equal(await client.getByText("Обновлены данные заявки", { exact: true }).count(), 0);
-  // An unfinished application is available only in the dedicated draft filter.
+  // Drafts are helper state, offered when reopening the form, rather than application rows.
   await close(client);
   await client.getByRole("button", { name: "Мои кредиты", exact: true }).click();
   assert.equal(await client.getByRole("row").filter({ hasText: applicationId }).count(), 0);
-  await client.getByLabel("Статус заявки").selectOption("DRAFT");
-  await client.getByRole("row").filter({ hasText: applicationId }).getByRole("button", { name: "Открыть заявку" }).click();
+  assert.equal(await client.getByLabel("Статус заявки").locator('option[value="DRAFT"]').count(), 0);
+  await client.getByRole("navigation").getByRole("button", { name: "Кредитный калькулятор", exact: true }).click();
+  await client.getByRole("button", { name: "Оформить заявку", exact: false }).click();
+  await client.getByRole("button", { name: "Продолжить черновик", exact: true }).click();
   await client.getByLabel("Обновить профиль бизнеса данными этой заявки").check();
   await next(client);
   await next(client);
@@ -114,6 +117,7 @@ try {
   await bank.getByLabel("Комментарий / заключение").fill("Уточните годовую выручку.");
   await bank.getByRole("button", { name: "Запросить уточнение", exact: true }).click();
   await bank.locator(".application-heading .status").filter({ hasText: "Нужно уточнение" }).waitFor();
+  await client.getByRole("navigation").getByRole("button", { name: /^Мои кредиты/ }).click();
   await client.getByLabel("Статус заявки").selectOption("all");
   await client.getByRole("button", { name: "Обновить заявки" }).click();
   await client.getByRole("row").filter({ hasText: applicationId }).getByRole("button", { name: "Открыть заявку" }).click();
@@ -123,7 +127,7 @@ try {
   await client.getByLabel("Подтверждаю актуальность сведений и согласие на их обработку").check();
   await client.getByRole("button", { name: "Отправить заявку", exact: true }).click();
   await client.locator(".application-heading .status").filter({ hasText: "На проверке" }).waitFor();
-  assert.equal(await client.getByText("Создан черновик", { exact: true }).count(), 1);
+  assert.equal(await client.getByText("Создан черновик", { exact: true }).count(), 0);
   await close(bank);
   await bank.getByRole("button", { name: "Обновить", exact: true }).click();
   await openBank();
@@ -139,7 +143,7 @@ try {
   await client.getByRole("button", { name: /^Уведомления/ }).click();
   await client.locator(".notification-item").filter({ hasText: applicationId }).first().getByRole("button", { name: "Открыть заявку", exact: true }).click();
   await client.locator(".application-heading .status").filter({ hasText: "Одобрена" }).waitFor();
-  for (const text of ["Получены результаты проверки ФНС и БКИ", "Первичная проверка завершена", "Запущен автоматический анализ", "Загружен документ", "Обновлены данные заявки"]) {
+  for (const text of ["Получено решение по заявке", "Получены результаты проверки ФНС и БКИ", "Первичная проверка завершена", "Запущен автоматический анализ", "Загружен документ", "Обновлены данные заявки"]) {
     assert.equal(await client.getByText(text, { exact: true }).count(), 0);
   }
   const pdfResponse = client.waitForResponse((response) => response.url().endsWith("/contract/pdf"));
@@ -166,7 +170,7 @@ try {
   assert.equal(await client.getByLabel("Электронная почта").inputValue(), "");
   assert.equal(await client.getByLabel("Пароль", { exact: true }).inputValue(), "");
   assert.deepEqual(errors, []);
-  console.log("PASS: INN on step 1, overpayment, one draft, filtered history, draft filter, step-specific profile sync, persistent notifications for both roles, officer checks, clarification, scoring, PDF preview/download and logout reset");
+  console.log("PASS: INN on step 1, overpayment, one resumable draft, filtered newest-first history, draft chooser, early profile differences, persistent notifications for both roles, officer checks, clarification, scoring, PDF preview/download and logout reset");
 } catch (error) {
   let index = 0;
   for (const context of browser.contexts()) for (const page of context.pages()) {

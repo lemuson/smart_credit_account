@@ -9,6 +9,7 @@ import {
   nextTick,
 } from "vue";
 import Icon from "./components/Icon.vue";
+import { applicationFinancials, draftData, draftFingerprint, externalFields, profileDifferences } from "./applicationForm.js";
 import { api, setToken } from "./api";
 import {
   validInn, fieldLabels, auditActions, factorLabels, discrepancyLabels, checkRows, reviewSummary,
@@ -62,6 +63,12 @@ const current = ref(null),
   originalApplication = ref(null),
   signingCode = ref(""),
   requiredDocs = ref([]);
+const drafts = ref([]), pendingProduct = ref(null), formPrefill = ref(null);
+const draftSaving = ref(false), draftSaved = ref(false);
+let draftTimer, draftSavePromise = null, draftHydrating = false, formEpoch = 0, draftNonce = "";
+let formBaseline = "", lastSavedDraft = "";
+const formFingerprint = computed(() => draftFingerprint(company, financials));
+const obligations = computed(() => current.value?.credit_obligations || profile.value.credit_obligations || {});
 const notifications = ref({ items: [], unread_count: 0 });
 const notificationLoading = ref(false);
 const contractUrl = ref("");
@@ -90,21 +97,15 @@ const available = computed(() =>
   ),
 );
 const submittedApplications = computed(() => applications.value.filter((a) => a.status !== "DRAFT"));
-const draftCount = computed(() => applications.value.filter((a) => a.status === "DRAFT").length);
 const latestCheck = computed(() => current.value?.checks?.filter((c) => c.data_revision === current.value.data_revision).at(-1));
-const profileDiff = computed(() => (step.value === 1 ? ["company"] : step.value === 2 ? ["financials"] : []).flatMap((group) =>
-  Object.entries(group === "company" ? company : financials)
-    .filter(([key, value]) => group === "financials" && !["credit_history", "has_collateral"].includes(key)
-      ? Number(profile.value[group]?.[key]) !== Number(value)
-      : String(profile.value[group]?.[key] ?? "") !== String(value))
-    .map(([key]) => fieldLabels[key] || key),
-));
+const profileDiff = computed(() => profileDifferences(company, financials, profile.value, step.value));
 const clarificationSummary = computed(() => {
   const before = originalApplication.value;
   if (!before) return "";
   const changed = ["company", "financials"].flatMap((group) =>
     Object.entries(group === "company" ? company : financials)
       .filter(([key, value]) => {
+        if (group === "financials" && externalFields.includes(key)) return false;
         const old = before[group]?.[key];
         return typeof value === "boolean" ? value !== old :
           group === "financials" && key !== "credit_history" ? Number(value) !== Number(old) : String(value) !== String(old ?? "");
@@ -289,6 +290,9 @@ function logout() {
   Object.assign(financials, emptyFinancials());
   modal.value = null;
   current.value = null;
+  formEpoch++;
+  clearTimeout(draftTimer);
+  drafts.value = [];
   navigate("home");
 }
 function openProfile() {
@@ -318,6 +322,7 @@ async function saveProfile() {
       body: {
         company: { ...company },
         financials: financials.annual_revenue ? financialPayload() : null,
+        external_liabilities: Object.fromEntries(externalFields.map((key) => [key, String(financials[key] || "0")])),
       },
     });
     modal.value = null;
@@ -347,45 +352,112 @@ async function createApplication(product) {
   if (!user.value) return askLogin();
   await run(async () => {
     const p = product || available.value[0];
-    if (!p)
-      throw new Error(
-        "Сначала выберите подходящий кредитный продукт в калькуляторе.",
-      );
-    const a = await api("/client/applications", {
-      method: "POST",
-      body: {
-        product_id: p.id,
-        purpose: calc.purpose,
-        amount: String(calc.amount),
-        term_months: Number(calc.term),
-      },
-    });
-    await openApplication(a.id);
-    await refresh();
+    if (!p) throw new Error("Сначала выберите подходящий кредитный продукт в калькуляторе.");
+    const [freshProfile, savedDrafts, prefill] = await Promise.all([api("/profile"), api("/client/application-drafts"), api("/client/application-drafts/prefill")]);
+    profile.value = freshProfile;
+    drafts.value = savedDrafts;
+    formPrefill.value = prefill;
+    pendingProduct.value = p;
+    if (savedDrafts.length) modal.value = "draft-choice";
+    else await startNewForm(p);
   });
 }
-async function openApplication(id) {
-  error.value = "";
-  current.value = await api(
-    isOfficer.value
-      ? `/bank/applications/${id}/dossier`
-      : `/client/applications/${id}`,
-  );
-  Object.assign(company, emptyCompany(), current.value.company);
-  Object.assign(financials, emptyFinancials(), current.value.financials);
-  requiredDocs.value =
-    current.value.clarifications
-      ?.filter((c) => !c.responded_at)
-      .flatMap((c) => c.required_documents) || [];
-  originalApplication.value = JSON.parse(JSON.stringify(current.value));
+async function prepareForm(application) {
+  formEpoch++;
+  clearTimeout(draftTimer);
+  draftHydrating = true;
+  current.value = application;
+  Object.assign(company, emptyCompany(), application.company);
+  Object.assign(financials, emptyFinancials(), application.financials);
+  if (!isOfficer.value && ["DRAFT", "NEEDS_CLARIFICATION"].includes(application.status)) {
+    for (const key of externalFields) financials[key] = profile.value.financials[key] || "0";
+  }
+  requiredDocs.value = application.clarifications?.filter((c) => !c.responded_at).flatMap((c) => c.required_documents) || [];
+  originalApplication.value = JSON.parse(JSON.stringify(application));
   syncProfile.value = false;
   manualReview.value = false;
   step.value = 1;
   confirmed.value = false;
   comment.value = latestCheck.value ? reviewSummary(latestCheck.value.results) : "";
   signingCode.value = "";
+  draftNonce = application.id || crypto.randomUUID();
   modal.value = "application";
+  await nextTick();
+  formBaseline = lastSavedDraft = formFingerprint.value;
+  draftSaved.value = !!application.id;
+  draftHydrating = false;
 }
+async function startNewForm(product) {
+  await prepareForm({
+    id: null, status: "DRAFT", version: null, product_id: product.id,
+    product_snapshot: product, purpose: calc.purpose, amount: String(calc.amount),
+    term_months: Number(calc.term), company: { ...formPrefill.value.company },
+    financials: { ...formPrefill.value.financials }, source_loan_id: formPrefill.value.source_loan_id,
+    documents: [], checks: [], clarifications: [], history: [],
+    credit_obligations: formPrefill.value.credit_obligations,
+  });
+}
+async function openApplication(id) {
+  error.value = "";
+  const [application, freshProfile] = await Promise.all([
+    api(isOfficer.value ? `/bank/applications/${id}/dossier` : `/client/applications/${id}`),
+    isOfficer.value ? null : api("/profile"),
+  ]);
+  if (freshProfile) profile.value = freshProfile;
+  await prepareForm(application);
+}
+async function persistDraft(force = false) {
+  clearTimeout(draftTimer);
+  if (!current.value || current.value.status !== "DRAFT") return;
+  if (draftSavePromise) {
+    await draftSavePromise;
+    return persistDraft(force);
+  }
+  const epoch = formEpoch;
+  const fingerprint = formFingerprint.value;
+  if ((!current.value.id && !force && fingerprint === formBaseline) ||
+      (current.value.id && fingerprint === lastSavedDraft)) return;
+  const payload = draftData(company, financials);
+  const application = current.value;
+  draftSaving.value = true;
+  draftSavePromise = (async () => {
+    let result = application;
+    if (!result.id) result = await api("/client/application-drafts", {
+      method: "POST", body: {
+        draft_id: draftNonce, product_id: application.product_id, purpose: application.purpose,
+        source_loan_id: application.source_loan_id || null,
+        amount: application.amount, term_months: application.term_months, ...payload,
+      },
+    });
+    result = await api(`/client/application-drafts/${result.id}`, {
+      method: "PUT", body: { expected_version: result.version, ...payload },
+    });
+    if (epoch === formEpoch) {
+      current.value = result;
+      lastSavedDraft = fingerprint;
+      draftSaved.value = true;
+    }
+  })();
+  try { await draftSavePromise; }
+  finally { draftSavePromise = null; draftSaving.value = false; }
+  if (epoch === formEpoch && formFingerprint.value !== lastSavedDraft) await persistDraft(force);
+}
+watch(formFingerprint, () => {
+  if (draftHydrating || modal.value !== "application" || current.value?.status !== "DRAFT") return;
+  draftSaved.value = false;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => persistDraft().catch((e) => { error.value = e.message; }), 650);
+});
+async function closeModal() {
+  if (busy.value) return;
+  if (modal.value === "application" && current.value?.status === "DRAFT") {
+    let saved = false;
+    await run(async () => { await persistDraft(); saved = true; });
+    if (!saved) return;
+  }
+  modal.value = null;
+}
+onUnmounted(() => { clearTimeout(draftTimer); formEpoch++; });
 async function reloadCurrent() {
   current.value = await api(
     isOfficer.value
@@ -395,33 +467,41 @@ async function reloadCurrent() {
   await refresh();
 }
 async function saveDraft(section) {
+  if (current.value.status === "DRAFT") return persistDraft();
   await api(`/client/applications/${current.value.id}`, {
-    method: "PUT",
-    body: {
+    method: "PUT", body: {
       expected_version: current.value.version,
       ...(section !== "financials" ? { company: { ...company } } : {}),
-      ...(section !== "company" ? { financials: financialPayload() } : {}),
+      ...(section !== "company" ? { financials: applicationFinancials(financials, profile.value.financials) } : {}),
     },
   });
   await reloadCurrent();
 }
 async function nextStep() {
   await run(async () => {
-    if (step.value === 1) {
-      if (!validInn(company.inn)) throw new Error("Проверьте ИНН: нужны 10 или 12 цифр с корректными контрольными цифрами.");
-      await saveDraft("company");
-    }
-    if (step.value === 2) await saveDraft("financials");
+    if (step.value === 1 && !validInn(company.inn)) throw new Error("Проверьте ИНН: нужны 10 или 12 цифр с корректными контрольными цифрами.");
+    await api("/client/application-drafts/validate", {
+      method: "POST", body: step.value === 1
+        ? { company: { ...company } }
+        : { financials: applicationFinancials(financials, profile.value.financials) },
+    });
+    await saveDraft(step.value === 1 ? "company" : "financials");
     step.value++;
   });
 }
 async function submitApplication() {
   await run(async () => {
-    await saveDraft();
+    if (current.value.status === "DRAFT") await persistDraft(true);
+    await api(`/client/applications/${current.value.id}`, {
+      method: "PUT", body: { expected_version: current.value.version,
+        company: { ...company }, financials: applicationFinancials(financials, profile.value.financials) },
+    });
+    await reloadCurrent();
     if (syncProfile.value) {
-      profile.value = await api("/profile", {
-        method: "PUT", body: { company: { ...company }, financials: financialPayload() },
+      await api(`/client/applications/${current.value.id}/sync-profile`, {
+        method: "POST", body: { expected_version: current.value.version },
       });
+      profile.value = await api("/profile");
     }
     const clarification = current.value.status === "NEEDS_CLARIFICATION";
     await api(
@@ -448,6 +528,7 @@ async function upload(event, kind) {
       file.size > 10485760
     )
       throw new Error("Выберите PDF, PNG или JPEG размером до 10 МБ.");
+    if (current.value.status === "DRAFT") await persistDraft(true);
     const body = new FormData();
     body.append("kind", kind);
     body.append("expected_version", current.value.version);
@@ -608,7 +689,7 @@ watch(modal, async (value, old) => {
   else previousFocus?.focus();
 });
 function onKey(e) {
-  if (e.key === "Escape") modal.value = null;
+  if (e.key === "Escape") closeModal();
   if (e.key === "Tab" && modal.value) {
     const nodes = [
       ...document.querySelectorAll(
@@ -1154,7 +1235,6 @@ onUnmounted(() => {
                     aria-label="Поиск заявки" /></label
                 ><select v-model="filter" aria-label="Статус заявки">
                   <option value="all">Отправленные заявки</option>
-                  <option v-if="!isOfficer" value="DRAFT">Черновики ({{ draftCount }})</option>
                   <option
                     v-for="(label, key) in Object.fromEntries(Object.entries(statuses).filter(([key]) => key !== 'DRAFT'))"
                     :key="key"
@@ -1373,7 +1453,7 @@ onUnmounted(() => {
         <Icon name="CheckCircle2" :size="20" />{{ toast }}
       </div></Transition
     >
-    <div v-if="modal" class="modal-backdrop" @click.self="modal = null">
+    <div v-if="modal" class="modal-backdrop" @click.self="closeModal">
       <section
         :class="[
           'modal',
@@ -1388,14 +1468,15 @@ onUnmounted(() => {
               ? 'Кредитная заявка'
               : modal === 'schedule'
                 ? 'График платежей'
-                : modal === 'notifications' ? 'Уведомления' : 'Профиль компании'
+                : modal === 'notifications' ? 'Уведомления' : modal === 'draft-choice' ? 'Продолжить заполнение' : 'Профиль компании'
         "
         tabindex="-1"
       >
         <button
           class="icon-btn modal-close"
+          :disabled="busy"
           aria-label="Закрыть"
-          @click="modal = null"
+          @click="closeModal"
         >
           <Icon name="X" />
         </button>
@@ -1450,6 +1531,17 @@ onUnmounted(() => {
             </button>
           </form></template
         >
+        <template v-else-if="modal === 'draft-choice'">
+          <h2>Продолжить заполнение?</h2>
+          <p class="muted">У вас есть сохранённые данные. Можно продолжить черновик или заполнить новую заявку.</p>
+          <article v-for="draft in drafts" :key="draft.id" class="notification-item">
+            <strong>{{ draft.company.name || 'Незавершённое заполнение' }}</strong>
+            <p>{{ purposes[draft.purpose] }} · {{ money(draft.amount) }} · {{ draft.term_months }} мес.</p>
+            <p class="muted small">Сохранено {{ date(draft.updated_at) }}</p>
+            <button class="secondary" :disabled="busy" @click="run(() => openApplication(draft.id))">Продолжить черновик</button>
+          </article>
+          <button class="primary full" :disabled="busy" @click="run(() => startNewForm(pendingProduct))">Создать новую заявку</button>
+        </template>
         <template v-else-if="modal === 'notifications'">
           <h2>Уведомления</h2>
           <div class="notification-toolbar">
@@ -1508,7 +1600,10 @@ onUnmounted(() => {
                 placeholder="62.01"
                 required
                 minlength="2" /></label
-            ><button class="primary full" :disabled="busy">
+            ><label>Платежи по кредитам других банков в месяц, ₽<input v-model="financials.monthly_debt_payments" type="number" min="0" step="0.01" required /></label>
+            <label>Остаток долга в других банках, ₽<input v-model="financials.outstanding_debt" type="number" min="0" step="0.01" required /></label>
+            <p class="muted small">Обязательства перед этим банком учитываются автоматически и не входят в эти поля.</p>
+            <button class="primary full" :disabled="busy">
               Сохранить данные
             </button>
           </form>
@@ -1568,11 +1663,11 @@ onUnmounted(() => {
         >
         <template v-else-if="modal === 'application' && current"
           ><span class="eyebrow"
-            >ЗАЯВКА № {{ current.id.slice(0, 8).toUpperCase() }}</span
+            >{{ current.status === 'DRAFT' ? 'ЗАПОЛНЕНИЕ ЗАЯВКИ' : 'ЗАЯВКА № ' + current.id.slice(0, 8).toUpperCase() }}</span
           >
           <div class="application-heading">
             <h2>{{ purposes[current.purpose] }}</h2>
-            <span :class="['status', current.status]">{{
+            <span v-if="current.status !== 'DRAFT'" :class="['status', current.status]">{{
               statuses[current.status]
             }}</span>
           </div>
@@ -1678,25 +1773,18 @@ onUnmounted(() => {
                     min="0"
                     step="0.01"
                     required /></label
-                ><label
-                  >Платежи по кредитам в месяц, ₽<input
-                    :value="financials.monthly_debt_payments"
-                    @input="
-                      financials.monthly_debt_payments = $event.target.value
-                    "
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    required /></label
-                ><label
-                  >Остаток текущего долга, ₽<input
-                    :value="financials.outstanding_debt"
-                    @input="financials.outstanding_debt = $event.target.value"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    required /></label
-                ><label
+                ><div class="span-2 credit-obligations">
+                  <h3>Текущие кредитные обязательства</h3>
+                  <dl>
+                    <dt>Платежи по кредитам этого банка</dt><dd>{{ money(obligations.bank_monthly_payments) }} / мес.</dd>
+                    <dt>Дополнительные платежи другим банкам</dt><dd>{{ money(obligations.external_monthly_payments) }} / мес.</dd>
+                    <dt>Итого текущие платежи</dt><dd>{{ money(obligations.total_monthly_payments) }} / мес.</dd>
+                    <dt>Остаток долга в этом банке</dt><dd>{{ money(obligations.bank_outstanding_debt) }}</dd>
+                    <dt>Остаток долга в других банках</dt><dd>{{ money(obligations.external_outstanding_debt) }}</dd>
+                  </dl>
+                  <p class="muted small">Платежи этого банка учитываются автоматически. Сведения о других банках можно изменить только в профиле бизнеса.</p>
+                </div>
+                <label
                   >Кредитная история<select v-model="financials.credit_history">
                     <option value="none">Нет кредитной истории</option>
                     <option value="good">Без просрочек</option>
@@ -1775,7 +1863,7 @@ onUnmounted(() => {
                   @click="step--"
                 >
                   Назад</button
-                ><span class="muted small">Черновик доступен в фильтре «Черновики»</span
+                ><span class="muted small">{{ draftSaving ? 'Сохраняем черновик…' : draftSaved ? 'Черновик сохранён' : 'Изменённые данные сохранятся автоматически' }}</span
                 ><button
                   class="primary"
                   :disabled="busy || (step === 3 && !confirmed)"
@@ -1814,10 +1902,10 @@ onUnmounted(() => {
                   <dd>{{ money(current.financials.annual_revenue) }}</dd>
                   <dt>Расходы / месяц</dt>
                   <dd>{{ money(current.financials.monthly_expenses) }}</dd>
-                  <dt>Кредитные платежи</dt>
-                  <dd>{{ money(current.financials.monthly_debt_payments) }}</dd>
-                  <dt>Текущий долг</dt>
-                  <dd>{{ money(current.financials.outstanding_debt) }}</dd>
+                  <dt>Платежи в этом банке</dt><dd>{{ money(obligations.bank_monthly_payments) }}</dd>
+                  <dt>Платежи другим банкам</dt><dd>{{ money(obligations.external_monthly_payments) }}</dd>
+                  <dt>Итого текущие платежи</dt><dd>{{ money(obligations.total_monthly_payments) }}</dd>
+                  <dt>Текущий долг всего</dt><dd>{{ money(obligations.total_outstanding_debt) }}</dd>
                   <dt>Обеспечение</dt>
                   <dd>
                     {{

@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.ai.router import router as chat_router
-from app.applications.router import bank_router, client_router, compat_router
+from app.applications.router import bank_router, client_router, compat_router, draft_router
 from app.auth.models import User
 from app.auth.router import admin_router
 from app.auth.router import router as auth_router
@@ -46,6 +46,7 @@ def create_app(settings=None, engine=None):
         product_router,
         catalog_router,
         client_router,
+        draft_router,
         bank_router,
         compat_router,
         loan_router,

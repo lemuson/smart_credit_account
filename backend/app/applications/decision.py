@@ -66,7 +66,11 @@ def analyze(application, checks, today, policy=None, policy_version=POLICY_VERSI
     revenue = Decimal(f["annual_revenue"])
     monthly_revenue = revenue / 12
     profit = monthly_revenue - Decimal(f["monthly_expenses"])
-    debt_payment = max(Decimal(f["monthly_debt_payments"]), Decimal(bki["monthly_payments"]))
+    debt_payment = (
+        Decimal(bki["bank_monthly_payments"]) + Decimal(bki["external_monthly_payments"])
+        if "bank_monthly_payments" in bki
+        else Decimal(f["monthly_debt_payments"]) + Decimal(bki["monthly_payments"])
+    )
     age = business_age(date.fromisoformat(application.company["registration_date"]), today)
     margin = profit / monthly_revenue
     score = weights.base
@@ -207,6 +211,7 @@ def analyze(application, checks, today, policy=None, policy_version=POLICY_VERSI
         "reasons": sorted(set(reasons)),
         "factors": factors,
         "metrics": {
+            "existing_monthly_payments": str(money(debt_payment)),
             "business_age_months": age,
             "monthly_net_profit": str(money(profit)),
             "profit_margin": str(margin.quantize(Decimal("0.0001"))),
