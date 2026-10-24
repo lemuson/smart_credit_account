@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+__pycache__
+**/__pycache__
+.pytest_cache
+.ruff_cache
+*.db
+*.db-*
+*.pyc
+AGENTS.md
+CODEX.md
+backend_integration_contract.md
