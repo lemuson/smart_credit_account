@@ -11,6 +11,7 @@ import {
 import Icon from "./components/Icon.vue";
 import { api, setToken } from "./api";
 import {
+  validInn, fieldLabels, auditActions, factorLabels, discrepancyLabels, checkRows, reviewSummary,
   purposes,
   statuses,
   documentKinds,
@@ -56,6 +57,9 @@ const current = ref(null),
   step = ref(1),
   confirmed = ref(false),
   comment = ref(""),
+  syncProfile = ref(false),
+  manualReview = ref(false),
+  originalApplication = ref(null),
   signingCode = ref(""),
   requiredDocs = ref([]);
 const chatBusy = ref(false), chatConversation = ref(null);
@@ -80,9 +84,32 @@ const available = computed(() =>
     matches(p, calc.purpose, calc.amount, calc.term),
   ),
 );
+const submittedApplications = computed(() => applications.value.filter((a) => a.status !== "DRAFT"));
+const draftCount = computed(() => applications.value.filter((a) => a.status === "DRAFT").length);
+const latestCheck = computed(() => current.value?.checks?.filter((c) => c.data_revision === current.value.data_revision).at(-1));
+const profileDiff = computed(() => ["company", "financials"].flatMap((group) =>
+  Object.entries(group === "company" ? company : financials)
+    .filter(([key, value]) => group === "financials" && !["credit_history", "has_collateral"].includes(key)
+      ? Number(profile.value[group]?.[key]) !== Number(value)
+      : String(profile.value[group]?.[key] ?? "") !== String(value))
+    .map(([key]) => fieldLabels[key] || key),
+));
+const clarificationSummary = computed(() => {
+  const before = originalApplication.value;
+  if (!before) return "";
+  const changed = ["company", "financials"].flatMap((group) =>
+    Object.entries(group === "company" ? company : financials)
+      .filter(([key, value]) => {
+        const old = before[group]?.[key];
+        return typeof value === "boolean" ? value !== old :
+          group === "financials" && key !== "credit_history" ? Number(value) !== Number(old) : String(value) !== String(old ?? "");
+      }).map(([key]) => fieldLabels[key] || key));
+  const docsChanged = JSON.stringify(before.documents.map((d) => d.id)) !== JSON.stringify(current.value.documents.map((d) => d.id));
+  return [changed.length ? `Изменены сведения: ${changed.join(", ")}.` : "", docsChanged ? "Обновлены документы." : ""].filter(Boolean).join(" ") || "Сведения и документы проверены, подтверждаю их актуальность.";
+});
 const activeApplications = computed(() =>
   applications.value.filter(
-    (a) => !["DISBURSED", "REJECTED", "OFFER_DECLINED"].includes(a.status),
+    (a) => !["DRAFT", "DISBURSED", "REJECTED", "OFFER_DECLINED"].includes(a.status),
   ),
 );
 const attention = computed(() =>
@@ -93,7 +120,7 @@ const attention = computed(() =>
 const filtered = computed(() =>
   applications.value.filter(
     (a) =>
-      (filter.value === "all" || a.status === filter.value) &&
+      (filter.value === "all" ? a.status !== "DRAFT" : a.status === filter.value) &&
       `${a.company?.name} ${a.id} ${purposes[a.purpose]}`
         .toLowerCase()
         .includes(search.value.toLowerCase()),
@@ -102,6 +129,7 @@ const filtered = computed(() =>
 const estimated = computed(() =>
   payment(calc.amount, available.value[0]?.annual_rate || 18, calc.term),
 );
+const previewTotal = computed(() => preview.value?.total_payment ?? preview.value?.schedule?.reduce((sum, row) => sum + Number(row.payment), 0) ?? 0);
 const editable = computed(
   () =>
     current.value &&
@@ -190,6 +218,10 @@ async function authenticate() {
 }
 function logout() {
   setToken("");
+  auth.email = "";
+  auth.password = "";
+  register.value = false;
+  filter.value = "all";
   user.value = null;
   profile.value = { company: {}, financials: {} };
   products.value = [];
@@ -223,6 +255,7 @@ function financialPayload() {
 }
 async function saveProfile() {
   await run(async () => {
+    if (!validInn(company.inn)) throw new Error("Проверьте ИНН: нужны 10 или 12 цифр с корректными контрольными цифрами.");
     profile.value = await api("/profile", {
       method: "PUT",
       body: {
@@ -287,9 +320,12 @@ async function openApplication(id) {
     current.value.clarifications
       ?.filter((c) => !c.responded_at)
       .flatMap((c) => c.required_documents) || [];
+  originalApplication.value = JSON.parse(JSON.stringify(current.value));
+  syncProfile.value = false;
+  manualReview.value = false;
   step.value = 1;
   confirmed.value = false;
-  comment.value = "";
+  comment.value = latestCheck.value ? reviewSummary(latestCheck.value.results) : "";
   signingCode.value = "";
   modal.value = "application";
 }
@@ -301,26 +337,35 @@ async function reloadCurrent() {
   );
   await refresh();
 }
-async function saveDraft() {
+async function saveDraft(section) {
   await api(`/client/applications/${current.value.id}`, {
     method: "PUT",
     body: {
       expected_version: current.value.version,
-      company: { ...company },
-      financials: financialPayload(),
+      ...(section !== "financials" ? { company: { ...company } } : {}),
+      ...(section !== "company" ? { financials: financialPayload() } : {}),
     },
   });
   await reloadCurrent();
 }
 async function nextStep() {
   await run(async () => {
-    if (step.value === 2) await saveDraft();
+    if (step.value === 1) {
+      if (!validInn(company.inn)) throw new Error("Проверьте ИНН: нужны 10 или 12 цифр с корректными контрольными цифрами.");
+      await saveDraft("company");
+    }
+    if (step.value === 2) await saveDraft("financials");
     step.value++;
   });
 }
 async function submitApplication() {
   await run(async () => {
     await saveDraft();
+    if (syncProfile.value) {
+      profile.value = await api("/profile", {
+        method: "PUT", body: { company: { ...company }, financials: financialPayload() },
+      });
+    }
     const clarification = current.value.status === "NEEDS_CLARIFICATION";
     await api(
       `/client/applications/${current.value.id}/${clarification ? "clarify" : "submit"}`,
@@ -329,7 +374,7 @@ async function submitApplication() {
         body: {
           expected_version: current.value.version,
           confirmed: confirmed.value,
-          ...(clarification ? { response: comment.value } : {}),
+          ...(clarification ? { response: [clarificationSummary.value, comment.value.trim()].filter(Boolean).join("\n\n") } : {}),
         },
       },
     );
@@ -406,6 +451,7 @@ async function action(name) {
       { method: "POST", body },
     );
     await reloadCurrent();
+    if (name === "run-external-checks" && latestCheck.value) comment.value = reviewSummary(latestCheck.value.results);
     flash("Статус заявки обновлён");
   });
 }
@@ -716,15 +762,15 @@ onUnmounted(() => {
             <div class="section-heading">
               <h2>
                 {{ isOfficer ? "Заявки на обработку" : "Мои заявки" }}
-                <span class="count">{{ applications.length }}</span>
+                <span class="count">{{ submittedApplications.length }}</span>
               </h2>
               <button class="text-btn" @click="navigate('loans')">
                 Все заявки <Icon name="ArrowRight" :size="17" />
               </button>
             </div>
-            <template v-if="applications.length"
+            <template v-if="submittedApplications.length"
               ><button
-                v-for="a in applications.slice(0, 3)"
+                v-for="a in submittedApplications.slice(0, 3)"
                 :key="a.id"
                 class="application-row"
                 @click="run(() => openApplication(a.id))"
@@ -912,6 +958,8 @@ onUnmounted(() => {
               <span>Базовая ставка</span
               ><strong>{{ available[0]?.annual_rate || 18 }}% годовых</strong>
             </div>
+            <div class="result-line"><span>Переплата по процентам</span><strong>{{ money(estimated * Number(calc.term) - Number(calc.amount)) }}</strong></div>
+            <div class="result-line"><span>Общая сумма выплат</span><strong>{{ money(estimated * Number(calc.term)) }}</strong></div>
             <button
               class="primary full"
               :disabled="
@@ -1057,9 +1105,10 @@ onUnmounted(() => {
                     placeholder="Найти заявку"
                     aria-label="Поиск заявки" /></label
                 ><select v-model="filter" aria-label="Статус заявки">
-                  <option value="all">Все статусы</option>
+                  <option value="all">Отправленные заявки</option>
+                  <option v-if="!isOfficer" value="DRAFT">Черновики ({{ draftCount }})</option>
                   <option
-                    v-for="(label, key) in statuses"
+                    v-for="(label, key) in Object.fromEntries(Object.entries(statuses).filter(([key]) => key !== 'DRAFT'))"
                     :key="key"
                     :value="key"
                   >
@@ -1415,6 +1464,8 @@ onUnmounted(() => {
               ><strong>{{ money(preview.monthly_payment) }}</strong>
             </div>
           </div>
+          <div class="result-line"><span>Переплата по процентам</span><strong>{{ money(Number(previewTotal) - Number(preview.amount)) }}</strong></div>
+          <div class="result-line"><span>Общая сумма выплат</span><strong>{{ money(previewTotal) }}</strong></div>
           <p class="muted small">
             Демонстрационный расчёт. Условия не являются публичной офертой.
           </p>
@@ -1633,15 +1684,17 @@ onUnmounted(() => {
                     <Icon name="X" :size="16" />
                   </button>
                 </div>
-                <label v-if="current.status === 'NEEDS_CLARIFICATION'"
-                  >Ответ сотруднику<textarea
-                    v-model="comment"
-                    minlength="3"
-                    maxlength="4000"
-                    required
-                    placeholder="Какие сведения вы уточнили?"
-                  /></label
-                ><label class="checkbox-label confirmation"
+                <div v-if="profileDiff.length" class="alert warning">
+                  <div><strong>Данные отличаются от профиля бизнеса</strong>
+                    <p>{{ profileDiff.join(", ") }}</p>
+                    <label class="checkbox-label"><input v-model="syncProfile" type="checkbox" />Обновить профиль бизнеса данными этой заявки</label>
+                  </div>
+                </div>
+                <div v-if="current.status === 'NEEDS_CLARIFICATION'">
+                  <p class="muted small">Ответ сотруднику: {{ clarificationSummary }}</p>
+                  <label>Дополнение к ответу (необязательно)<textarea v-model="comment" minlength="3" maxlength="3000" placeholder="Поясните изменения, если это необходимо" /></label>
+                </div>
+                <label class="checkbox-label confirmation"
                   ><input v-model="confirmed" type="checkbox" required />
                   Подтверждаю актуальность сведений и согласие на их
                   обработку</label
@@ -1655,7 +1708,7 @@ onUnmounted(() => {
                   @click="step--"
                 >
                   Назад</button
-                ><span class="muted small">Черновик сохранится в кабинете</span
+                ><span class="muted small">Черновик доступен в фильтре «Черновики»</span
                 ><button
                   class="primary"
                   :disabled="busy || (step === 3 && !confirmed)"
@@ -1737,6 +1790,10 @@ onUnmounted(() => {
               </button>
             </div></template
           >
+          <section v-if="isOfficer && current.clarifications?.some((c) => c.responded_at)">
+            <h3>Ответы на уточнения</h3>
+            <div v-for="c in current.clarifications.filter((c) => c.responded_at)" :key="c.id" class="check-result"><strong>{{ c.comment }}</strong><p>{{ c.response }}</p><small>{{ date(c.responded_at) }}</small></div>
+          </section>
           <section v-if="isOfficer" class="officer-actions">
             <h3>Обработка заявки</h3>
             <div
@@ -1745,7 +1802,10 @@ onUnmounted(() => {
               class="check-result"
             >
               <strong>Проверка от {{ date(check.created_at) }}</strong>
-              <pre>{{ JSON.stringify(check.results, null, 2) }}</pre>
+              <p class="muted small">Учебные источники: имитация ФНС и БКИ, без обращения к государственным реестрам и бюро.</p>
+              <p v-if="check.data_revision !== current.data_revision" class="alert warning">Результаты устарели после изменения данных. Запустите проверку повторно.</p>
+              <dl><template v-for="[label, value] in checkRows(check.results)" :key="label"><dt>{{ label }}</dt><dd>{{ value }}</dd></template></dl>
+              <p v-for="code in check.results.discrepancies" :key="code" class="alert warning">{{ discrepancyLabels[code] || code }}</p>
             </div>
             <div v-if="current.status === 'SUBMITTED'" class="action-buttons">
               <button
@@ -1756,9 +1816,12 @@ onUnmounted(() => {
                 Взять в работу
               </button>
             </div>
-            <template v-if="current.status === 'PRIMARY_REVIEW'"
-              ><label
-                >Комментарий / заключение<textarea
+            <template v-if="current.status === 'PRIMARY_REVIEW'">
+              <button class="secondary" :disabled="busy" @click="action('run-external-checks')"><Icon name="ShieldCheck" :size="17" /> Проверить ФНС и БКИ</button>
+              <p v-if="!latestCheck" class="muted small">Получите актуальные данные ФНС и БКИ, чтобы подготовить заключение.</p>
+              <button v-if="!latestCheck && !manualReview" class="secondary" @click="manualReview = true">Запросить уточнение или отклонить до получения проверок</button>
+              <template v-if="latestCheck || manualReview"><label
+                >{{ latestCheck ? 'Комментарий / заключение' : 'Вопрос клиенту / причина отказа' }}<textarea
                   v-model="comment"
                   minlength="3"
                   maxlength="4000"
@@ -1780,12 +1843,6 @@ onUnmounted(() => {
               <div class="action-buttons">
                 <button
                   class="secondary"
-                  :disabled="busy"
-                  @click="action('run-external-checks')"
-                >
-                  <Icon name="ShieldCheck" :size="17" /> Проверить ФНС и БКИ</button
-                ><button
-                  class="secondary"
                   :disabled="busy || comment.trim().length < 3"
                   @click="action('request-clarification')"
                 >
@@ -1799,12 +1856,12 @@ onUnmounted(() => {
                 ><button
                   class="primary"
                   :disabled="
-                    busy || comment.trim().length < 3 || !current.checks.length
+                    busy || comment.trim().length < 3 || !latestCheck || !!latestCheck.results.discrepancies?.length
                   "
                   @click="action('pass-to-auto-analysis')"
                 >
                   Запустить автоанализ <Icon name="ArrowRight" :size="17" />
-                </button></div
+                </button></div></template
             ></template>
             <p
               v-else-if="current.status === 'NEEDS_CLARIFICATION'"
@@ -1818,12 +1875,12 @@ onUnmounted(() => {
             <div class="schedule-summary">
               <div>
                 <small>Скоринговый балл</small
-                ><strong>{{ current.decision.score }} / 850</strong>
+                ><strong>{{ current.decision.score == null ? 'Не рассчитывался' : current.decision.score + ' / 850' }}</strong>
               </div>
               <div>
                 <small>Категория риска</small
                 ><strong>{{
-                  current.decision.risk_category?.replace("CATEGORY_", "")
+                  current.decision.risk_category?.replace("CATEGORY_", "").replace("REJECT_D", "D") || "Не определена"
                 }}</strong>
               </div>
               <div>
@@ -1841,9 +1898,16 @@ onUnmounted(() => {
                   .join("; ")
               }}
             </p>
-            <details v-if="isOfficer">
+            <p class="muted small">Балл характеризует риск. Решение также учитывает обязательные требования продукта и долговую нагрузку.</p>
+            <dl v-if="current.decision.metrics">
+              <dt>Срок работы бизнеса</dt><dd>{{ current.decision.metrics.business_age_months }} мес.</dd>
+              <dt>Чистая прибыль в месяц</dt><dd>{{ money(current.decision.metrics.monthly_net_profit) }}</dd>
+              <dt>Долговая нагрузка</dt><dd>{{ current.decision.metrics.debt_burden == null ? 'Не рассчитывается при неположительной прибыли' : (Number(current.decision.metrics.debt_burden) * 100).toFixed(1) + '%' }}</dd>
+              <dt>Допустимая нагрузка</dt><dd>{{ (Math.min(Number(current.decision.policy_snapshot?.max_burden ?? .7), Number(current.product_snapshot.max_debt_burden)) * 100).toFixed(1) }}%</dd>
+            </dl>
+            <details v-if="isOfficer && current.decision.factors?.length">
               <summary>Факторы оценки</summary>
-              <pre>{{ JSON.stringify(current.decision.factors, null, 2) }}</pre>
+              <dl><template v-for="factor in current.decision.factors" :key="factor.code"><dt>{{ factorLabels[factor.code] || factor.code }}</dt><dd>{{ factor.points > 0 ? '+' : '' }}{{ factor.points }} баллов</dd></template></dl>
             </details>
           </section>
           <section v-if="current.offer" class="offer-section">
@@ -1923,8 +1987,9 @@ onUnmounted(() => {
             >
               <span class="live-dot"></span
               ><span
-                >{{ statuses[event.to_status]
-                }}<small>{{ date(event.created_at) }}</small></span
+                ><span>{{ auditActions[event.action] || 'Изменение заявки' }}</span>
+                <small>{{ statuses[event.to_status] }} · {{ date(event.created_at) }}</small>
+                <small v-if="event.details.comment">{{ event.details.comment }}</small></span
               >
             </div>
           </section>

@@ -35,6 +35,8 @@ const targetRow = bank
 const applicationId = (await targetRow.innerText()).match(/№ ([A-F0-9]+)/)[1];
 await targetRow.getByRole("button", { name: "Открыть заявку" }).click();
 await bank.getByRole("button", { name: "Взять в работу", exact: true }).click();
+await bank.getByRole("button", { name: "Проверить ФНС и БКИ", exact: false }).click();
+await bank.getByLabel("Комментарий / заключение").waitFor();
 await bank
   .getByLabel("Комментарий / заключение")
   .fill("Уточните финансовые сведения и подтвердите их актуальность.");
@@ -53,7 +55,7 @@ await client
 await client.getByRole("button", { name: "Продолжить", exact: true }).click();
 await client.getByRole("button", { name: "Продолжить", exact: true }).click();
 await client
-  .getByLabel("Ответ сотруднику")
+  .getByLabel("Дополнение к ответу (необязательно)")
   .fill("Сведения проверены, финансовые показатели актуальны.");
 await client
   .getByLabel("Подтверждаю актуальность сведений и согласие на их обработку")

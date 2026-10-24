@@ -144,8 +144,9 @@ class ApplicationService:
             value = getattr(data, field)
             if hasattr(value, "model_dump"):
                 value = value.model_dump(mode="json")
-            setattr(obj, field, value)
-            changed.append(field)
+            if getattr(obj, field) != value:
+                setattr(obj, field, value)
+                changed.append(field)
         if changed:
             obj.data_revision += 1
             obj.updated_at = now()

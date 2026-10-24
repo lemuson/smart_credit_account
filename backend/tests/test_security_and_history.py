@@ -353,3 +353,27 @@ def test_large_money_is_persisted_without_float_precision_loss(flow):
         "/api/v1/client/applications/" + created.json()["id"], headers=flow.headers["client"]
     )
     assert fetched.status_code == 200 and fetched.json()["amount"] == "99999999999999.99"
+
+
+def test_noop_save_preserves_revision_checks_and_single_draft(flow):
+    flow.create()
+    before = flow.get()
+    response = flow.api.put(
+        flow.base,
+        headers=flow.headers["client"],
+        json={
+            "expected_version": before["version"],
+            "company": before["company"],
+            "financials": before["financials"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert flow.get() == before
+    flow.submit_and_take()
+    assert flow.action("run-external-checks", "officer").status_code == 200
+    client_view = flow.get()
+    assert client_view["status"] == "PRIMARY_REVIEW"
+    assert sum(event["action"] == "DRAFT_CREATED" for event in client_view["history"]) == 1
+    assert any(event["action"] == "DOCUMENT_UPLOADED" for event in client_view["history"])
+    listed = flow.api.get("/api/v1/client/applications", headers=flow.headers["client"]).json()
+    assert len(listed) == 1 and listed[0]["id"] == flow.id

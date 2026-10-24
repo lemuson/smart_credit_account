@@ -1,3 +1,5 @@
+import { fieldLabels } from "./domain.js";
+
 let token = sessionStorage.getItem("credit-token") || "";
 export function setToken(value) {
   token = value;
@@ -55,17 +57,24 @@ export async function api(path, { method = "GET", body, raw = false } = {}) {
       window.dispatchEvent(new Event("credit-session-expired"));
     }
     const detail = data?.detail;
+    const fieldError = (x) => {
+      const key = String((x.loc || [x.field]).at(-1) ?? "").split(".").at(-1);
+      if (key === "inn") return messages.INVALID_INN;
+      const label = fieldLabels[key] || "Поле формы";
+      if (key === "registration_date") return `${label}: укажите корректную дату не позднее сегодняшней.`;
+      return `${label}: проверьте значение.`;
+    };
     const fields = Array.isArray(detail)
       ? detail
           .map(
-            (x) => `${x.loc?.filter((p) => p !== "body").join(".")}: ${x.msg}`,
+            fieldError,
           )
           .join("; ")
       : detail?.errors
           ?.map((x) =>
             typeof x === "string"
               ? x
-              : `${x.field || x.code || ""} ${x.message || ""}`,
+              : fieldError(x),
           )
           .join("; ");
     throw new Error(

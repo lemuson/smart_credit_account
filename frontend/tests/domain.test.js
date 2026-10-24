@@ -23,3 +23,20 @@ test("product matching respects inclusive limits, purpose and availability", () 
     false,
   );
 });
+
+test("INN checksum accepts legal entity and entrepreneur numbers and rejects malformed input", async () => {
+  const { validInn } = await import("../src/domain.js");
+  for (const inn of ["7700000009", "7707083893", "500100732259"]) assert.equal(validInn(inn), true, inn);
+  for (const inn of ["7700000001", "500100732250", "0000000000", "111111111111", "770000000", "770000000x", ""]) assert.equal(validInn(inn), false, inn);
+});
+
+test("check explanations preserve adverse data and distinguish demo checks", async () => {
+  const { checkRows, reviewSummary } = await import("../src/domain.js");
+  const results = { fns: { status: "active", account_blocked: false, tax_debt: "0" }, bki: { current_overdue_days: 0, historical_overdue_days: 0 }, discrepancies: [] };
+  assert.match(reviewSummary(results), /Расхождений.*не обнаружено/);
+  assert.ok(checkRows(results).some(([label, value]) => label.includes("руководителя") && value.includes("не проверялась")));
+  results.discrepancies.push("UNDERSTATED_OUTSTANDING_DEBT");
+  results.fns.account_blocked = true;
+  assert.match(reviewSummary(results), /Остаток долга.*ниже/);
+  assert.match(reviewSummary(results), /Счета заблокированы/);
+});

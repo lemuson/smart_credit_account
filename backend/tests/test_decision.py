@@ -108,3 +108,17 @@ def test_negative_profit_and_collateral_stop():
     assert offer is None and {"NON_POSITIVE_PROFIT", "COLLATERAL_REQUIRED"} <= set(
         decision["reasons"]
     )
+
+
+def test_score_690_requires_acceptable_debt_burden():
+    app = snapshot()
+    app.financials = financials(annual_revenue="3000000", monthly_expenses="50000")
+    external = checks()
+    external["bki"]["closed_loans"] = 0
+    decision, offer = analyze(app, external, date(2026, 10, 24))
+    assert decision["score"] == 690
+    assert offer and decision["outcome"] == "APPROVE"
+    app.financials["monthly_debt_payments"] = "200000"
+    decision, offer = analyze(app, external, date(2026, 10, 24))
+    assert decision["score"] == 690
+    assert offer is None and decision["reasons"] == ["DEBT_BURDEN_EXCEEDED"]
