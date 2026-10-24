@@ -1,0 +1,76 @@
+{
+  "info": {
+    "name": "Smart Credit AI Mock Backend",
+    "description": "Synthetic read-only requests for local AI Service development",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8090"},
+    {"key": "userId", "value": "20000000-0000-0000-0000-000000000001"},
+    {"key": "organizationId", "value": "10000000-0000-0000-0000-000000000001"},
+    {"key": "applicationId", "value": "30000000-0000-0000-0000-000000000001"}
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{"key": "token", "value": "demo-user-token", "type": "string"}]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.request.headers.upsert({key: 'X-Service-Token', value: 'development-service-token'});",
+          "pm.request.headers.upsert({key: 'X-User-ID', value: pm.variables.get('userId')});",
+          "pm.request.headers.upsert({key: 'X-Organization-ID', value: pm.variables.get('organizationId')});",
+          "pm.request.headers.upsert({key: 'X-Request-ID', value: pm.variables.replaceIn('{{$guid}}')});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {"method": "GET", "url": "{{baseUrl}}/health", "auth": {"type": "noauth"}}
+    },
+    {
+      "name": "Get profile",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/v1/profile"}
+    },
+    {
+      "name": "Search products",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/credit-products/search?amount=2000000&term_months=24"
+      }
+    },
+    {
+      "name": "Get product details",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/credit-products/demo-investment"
+      }
+    },
+    {
+      "name": "Get required documents",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/credit-products/demo-investment/required-documents"
+      }
+    },
+    {
+      "name": "Get application status",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/applications/{{applicationId}}/status"
+      }
+    },
+    {
+      "name": "Validate application",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/v1/applications/{{applicationId}}/validate"
+      }
+    }
+  ]
+}

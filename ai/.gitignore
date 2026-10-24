@@ -1,0 +1,60 @@
+# OS files
+.DS_Store
+._*
+Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.hypothesis/
+
+# Tests and coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# IDE and editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Local runtime data
+data/chroma/
+
+# Generated ML datasets and reports
+ml_scoring/data/*.csv
+ml_scoring/data/*.json
+ml_scoring/reports/figures/
+ml_scoring/reports/*.json
+
+# Generated model binaries and derived metadata
+ml_scoring/models/
+evaluation/results/
