@@ -33,7 +33,7 @@ def test_happy_path_disbursement_and_feed(flow):
     assert flow.action("sign", code="123456", contract_sha256=contract["sha256"]).status_code == 409
     loans = flow.api.get("/api/v1/client/loans", headers=flow.headers["client"]).json()
     assert len(loans) == 1 and loans[0]["application_id"] == flow.id
-    history = flow.get()["history"]
+    history = flow.get("officer")["history"]
     assert [event["to_status"] for event in history if event["from_status"]] == [
         "SUBMITTED",
         "PRIMARY_REVIEW",

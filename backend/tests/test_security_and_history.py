@@ -257,7 +257,7 @@ def test_loan_history_prefill_and_tenant_isolation(flow):
     assert Decimal(draft.json()["financials"]["outstanding_debt"]) == Decimal("900000")
     flow.submit_and_take()
     assert flow.action("run-external-checks", "officer").status_code == 200
-    dossier = flow.get()
+    dossier = flow.get("officer")
     assert not dossier["checks"][-1]["results"]["discrepancies"]
     assert "signing_code_hash" not in dossier
 
@@ -374,6 +374,6 @@ def test_noop_save_preserves_revision_checks_and_single_draft(flow):
     client_view = flow.get()
     assert client_view["status"] == "PRIMARY_REVIEW"
     assert sum(event["action"] == "DRAFT_CREATED" for event in client_view["history"]) == 1
-    assert any(event["action"] == "DOCUMENT_UPLOADED" for event in client_view["history"])
+    assert not any(event["action"] == "DOCUMENT_UPLOADED" for event in client_view["history"])
     listed = flow.api.get("/api/v1/client/applications", headers=flow.headers["client"]).json()
     assert len(listed) == 1 and listed[0]["id"] == flow.id

@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 
+from app.applications.contract_pdf import contract_pdf
 from app.applications.models import Status
 from app.applications.schemas import (
     ApplicationCreate,
@@ -55,7 +56,7 @@ def list_client(
 @bank_router.get("/{application_id}/dossier", response_model=Dossier)
 def detail(application_id: UUID, db: DB, user: CurrentUser):
     service = ApplicationService(db)
-    return service.dossier(service.get(application_id, user))
+    return service.dossier(service.get(application_id, user), user)
 
 
 @client_router.put("/{application_id}", response_model=ApplicationRead)
@@ -154,6 +155,19 @@ def contract(application_id: UUID, db: DB, user: Client):
     if not obj.contract:
         fail(409, "CONTRACT_NOT_READY")
     return obj.contract
+
+
+@client_router.get("/{application_id}/contract/pdf")
+@bank_router.get("/{application_id}/contract/pdf")
+def download_contract(application_id: UUID, db: DB, user: CurrentUser):
+    obj = ApplicationService(db).get(application_id, user)
+    if not obj.contract:
+        fail(409, "CONTRACT_NOT_READY")
+    return Response(
+        contract_pdf(obj.contract),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="contract-{obj.id}.pdf"'},
+    )
 
 
 @client_router.post("/{application_id}/sign", response_model=ApplicationRead)

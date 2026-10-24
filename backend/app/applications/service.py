@@ -143,6 +143,11 @@ class ApplicationService:
         for field in data.model_fields_set - {"expected_version"}:
             value = getattr(data, field)
             if hasattr(value, "model_dump"):
+                try:
+                    if type(value).model_validate(getattr(obj, field)) == value:
+                        continue
+                except ValidationError:
+                    pass
                 value = value.model_dump(mode="json")
             if getattr(obj, field) != value:
                 setattr(obj, field, value)
@@ -441,11 +446,20 @@ class ApplicationService:
         self.audit(obj, user, "DOCUMENT_DELETED", document_id=str(document_id))
         self.session.flush()
 
-    def dossier(self, obj):
+    def dossier(self, obj, user):
+        hidden = {"APPLICATION_UPDATED", "DOCUMENT_UPLOADED", "DOCUMENT_DELETED"}
+        if user.role == Role.CLIENT:
+            hidden |= {
+                "EXTERNAL_CHECKS_COMPLETED",
+                "PRIMARY_REVIEW_PASSED",
+                "AUTOMATIC_ANALYSIS_STARTED",
+                "SIGNING_CODE_REJECTED",
+            }
+        history = [event for event in self.dao.history(obj.id) if event.action not in hidden]
         return Dossier(
             **ApplicationRead.model_validate(obj).model_dump(),
             documents=self.dao.documents(obj.id),
-            checks=self.dao.checks(obj.id),
+            checks=self.dao.checks(obj.id) if user.role != Role.CLIENT else [],
             clarifications=self.dao.clarifications(obj.id),
-            history=self.dao.history(obj.id),
+            history=history,
         )

@@ -62,6 +62,11 @@ const current = ref(null),
   originalApplication = ref(null),
   signingCode = ref(""),
   requiredDocs = ref([]);
+const notifications = ref({ items: [], unread_count: 0 });
+const notificationLoading = ref(false);
+const contractUrl = ref("");
+const contractLoading = ref(false);
+let contractGeneration = 0;
 const chatBusy = ref(false), chatConversation = ref(null);
 let chatGeneration = 0;
 const chatInput = ref(""),
@@ -87,7 +92,7 @@ const available = computed(() =>
 const submittedApplications = computed(() => applications.value.filter((a) => a.status !== "DRAFT"));
 const draftCount = computed(() => applications.value.filter((a) => a.status === "DRAFT").length);
 const latestCheck = computed(() => current.value?.checks?.filter((c) => c.data_revision === current.value.data_revision).at(-1));
-const profileDiff = computed(() => ["company", "financials"].flatMap((group) =>
+const profileDiff = computed(() => (step.value === 1 ? ["company"] : step.value === 2 ? ["financials"] : []).flatMap((group) =>
   Object.entries(group === "company" ? company : financials)
     .filter(([key, value]) => group === "financials" && !["credit_history", "has_collateral"].includes(key)
       ? Number(profile.value[group]?.[key]) !== Number(value)
@@ -179,13 +184,64 @@ async function refresh() {
         api("/client/loans?limit=100"),
         api("/client/feed"),
       ];
+  tasks.push(api("/notifications"));
   const values = await Promise.all(tasks);
+  notifications.value = values.at(-1);
   applications.value = values[0];
   if (!isOfficer.value) {
     loans.value = values[1];
     feed.value = values[2].items;
   }
 }
+async function openNotifications() {
+  if (!user.value) return askLogin();
+  modal.value = "notifications";
+  await run(async () => { notifications.value = await api("/notifications"); });
+}
+async function markNotificationsRead(ids = [], all = false) {
+  notifications.value = await api("/notifications/read", {
+    method: "POST", body: { ids, all },
+  });
+}
+async function readNotification(item) {
+  await run(async () => {
+    await markNotificationsRead([item.id]);
+    await openApplication(item.application_id);
+  });
+}
+async function moreNotifications() {
+  notificationLoading.value = true;
+  try {
+    const next = await api(`/notifications?offset=${notifications.value.items.length}`);
+    notifications.value = {
+      unread_count: next.unread_count,
+      items: [...notifications.value.items, ...next.items],
+    };
+  } catch (e) { error.value = e.message; }
+  finally { notificationLoading.value = false; }
+}
+function releaseContract() {
+  contractGeneration++;
+  if (contractUrl.value) URL.revokeObjectURL(contractUrl.value);
+  contractUrl.value = "";
+  contractLoading.value = false;
+}
+async function loadContract() {
+  releaseContract();
+  if (!current.value?.contract) return;
+  const generation = contractGeneration;
+  contractLoading.value = true;
+  try {
+    const blob = await api(`/${isOfficer.value ? "bank" : "client"}/applications/${current.value.id}/contract/pdf`, { raw: true });
+    if (generation === contractGeneration) contractUrl.value = URL.createObjectURL(blob);
+  } catch (e) { if (generation === contractGeneration) error.value = e.message; }
+  finally { if (generation === contractGeneration) contractLoading.value = false; }
+}
+watch(() => modal.value === "application" && current.value?.contract
+  ? `${current.value.id}:${current.value.contract.sha256}` : null,
+  (key) => key ? loadContract() : releaseContract());
+onUnmounted(releaseContract);
+
 async function loadSession() {
   user.value = await api("/auth/me");
   if (user.value.role === "ADMIN") {
@@ -228,6 +284,7 @@ function logout() {
   applications.value = [];
   loans.value = [];
   feed.value = [];
+  notifications.value = { items: [], unread_count: 0 };
   Object.assign(company, emptyCompany());
   Object.assign(financials, emptyFinancials());
   modal.value = null;
@@ -618,21 +675,12 @@ onUnmounted(() => {
           ><Icon name="ShieldCheck" :size="15" /> Защищённое соединение</span
         ><button
           class="icon-btn notification"
-          aria-label="Уведомления"
-          @click="
-            user
-              ? (navigate('loans'),
-                (filter = 'all'),
-                flash(
-                  attention.length
-                    ? `Требуют внимания: ${attention.length}`
-                    : 'Новых уведомлений нет',
-                ))
-              : askLogin()
-          "
+          :disabled="loading || busy"
+          :aria-label="`Уведомления${notifications.unread_count ? ': непрочитанных ' + notifications.unread_count : ''}`"
+          @click="openNotifications"
         >
-          <Icon name="Bell" /><i v-if="attention.length"></i></button
-        ><button class="profile-btn" @click="user ? openProfile() : askLogin()">
+          <Icon name="Bell" /><i v-if="notifications.unread_count"></i></button>
+        <button class="profile-btn" @click="user ? openProfile() : askLogin()">
           <span class="avatar">{{ user ? companyName.slice(0, 1) : "Б" }}</span
           ><span>{{
             user
@@ -1163,6 +1211,7 @@ onUnmounted(() => {
                       <button
                         class="icon-btn"
                         aria-label="Открыть заявку"
+                        :disabled="busy"
                         @click.stop="run(() => openApplication(a.id))"
                       >
                         <Icon name="ChevronRight" :size="18" />
@@ -1339,7 +1388,7 @@ onUnmounted(() => {
               ? 'Кредитная заявка'
               : modal === 'schedule'
                 ? 'График платежей'
-                : 'Профиль компании'
+                : modal === 'notifications' ? 'Уведомления' : 'Профиль компании'
         "
         tabindex="-1"
       >
@@ -1401,6 +1450,24 @@ onUnmounted(() => {
             </button>
           </form></template
         >
+        <template v-else-if="modal === 'notifications'">
+          <h2>Уведомления</h2>
+          <div class="notification-toolbar">
+            <span class="muted small">Непрочитанных: {{ notifications.unread_count }}</span>
+            <button class="text-btn" :disabled="busy || !notifications.unread_count" @click="run(() => markNotificationsRead([], true))">Прочитать все</button>
+          </div>
+          <p v-if="!notifications.items.length" class="muted">Уведомлений пока нет.</p>
+          <article v-for="item in notifications.items" :key="item.id" :class="['notification-item', { unread: !item.read }]">
+            <strong>{{ item.title }}</strong>
+            <p class="muted small">Заявка № {{ item.application_id.slice(0, 8).toUpperCase() }} · {{ statuses[item.status] }} · {{ date(item.created_at) }}</p>
+            <div class="action-buttons">
+              <button class="text-btn" :disabled="busy" @click="readNotification(item)">Открыть заявку</button>
+              <button v-if="!item.read" class="text-btn" :disabled="busy" @click="run(() => markNotificationsRead([item.id]))">Отметить прочитанным</button>
+              <span v-else class="muted small">Прочитано</span>
+            </div>
+          </article>
+          <button v-if="notifications.items.length && notifications.items.length % 50 === 0" class="secondary" :disabled="notificationLoading" @click="moreNotifications">Показать ещё</button>
+        </template>
         <template v-else-if="modal === 'profile'"
           ><h2>{{ isOfficer ? "Профиль сотрудника" : "Моя компания" }}</h2>
           <p class="muted">
@@ -1556,6 +1623,12 @@ onUnmounted(() => {
               </button>
             </div>
             <form @submit.prevent="step < 3 ? nextStep() : submitApplication()">
+              <div v-if="profileDiff.length" class="alert warning profile-diff" role="status">
+                <div><strong>Данные отличаются от профиля бизнеса</strong>
+                  <p>{{ profileDiff.join(", ") }}</p>
+                  <label class="checkbox-label"><input v-model="syncProfile" type="checkbox" />Обновить профиль бизнеса данными этой заявки</label>
+                </div>
+              </div>
               <div v-if="step === 1" class="form-grid">
                 <label
                   >Название компании<input
@@ -1683,12 +1756,6 @@ onUnmounted(() => {
                   >
                     <Icon name="X" :size="16" />
                   </button>
-                </div>
-                <div v-if="profileDiff.length" class="alert warning">
-                  <div><strong>Данные отличаются от профиля бизнеса</strong>
-                    <p>{{ profileDiff.join(", ") }}</p>
-                    <label class="checkbox-label"><input v-model="syncProfile" type="checkbox" />Обновить профиль бизнеса данными этой заявки</label>
-                  </div>
                 </div>
                 <div v-if="current.status === 'NEEDS_CLARIFICATION'">
                   <p class="muted small">Ответ сотруднику: {{ clarificationSummary }}</p>
@@ -1952,10 +2019,15 @@ onUnmounted(() => {
               Демонстрационное оформление. Реальная подпись и перевод денег не
               выполняются.
             </p>
-            <details>
-              <summary>Проверить сформированный договор</summary>
-              <pre>{{ JSON.stringify(current.contract, null, 2) }}</pre>
-            </details>
+            <p v-if="contractLoading" class="muted">Формируем предпросмотр PDF…</p>
+            <template v-if="contractUrl">
+              <iframe class="contract-preview" :src="contractUrl" title="Предпросмотр кредитного договора в PDF"></iframe>
+              <div class="action-buttons">
+                <a class="secondary" :href="contractUrl" :download="`contract-${current.id}.pdf`">Скачать договор в PDF</a>
+                <a class="text-btn" :href="contractUrl" target="_blank" rel="noopener">Открыть PDF в новой вкладке</a>
+              </div>
+            </template>
+            <button v-else-if="!contractLoading" class="secondary" @click="loadContract">Повторить загрузку PDF</button>
             <form
               v-if="!isOfficer && current.status === 'SIGNING'"
               class="sign-form"

@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.database import make_engine
 from app.feed.router import router as feed_router
 from app.loans.router import router as loan_router
+from app.notifications.router import router as notification_router
 from app.products.router import router as product_router
 from app.profiles.router import router as profile_router
 from app.risk.router import router as risk_router
@@ -49,6 +50,7 @@ def create_app(settings=None, engine=None):
         compat_router,
         loan_router,
         feed_router,
+        notification_router,
         risk_router,
     ):
         app.include_router(router, prefix="/api/v1")

@@ -2180,3 +2180,33 @@ summary {
     transition: none !important;
   }
 }
+
+.notification-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+}
+.notification-item {
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.notification-item.unread {
+  border-left: 3px solid #ef3124;
+}
+.contract-preview {
+  width: 100%;
+  height: min(70vh, 720px);
+  min-height: 320px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  margin-bottom: 16px;
+}
+.contract-section a {
+  color: inherit;
+  text-decoration: none;
+}

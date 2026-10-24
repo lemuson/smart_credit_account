@@ -26,7 +26,7 @@ async function login(email) {
   return page;
 }
 const bank = await login(officer);
-await bank.getByRole("button", { name: "Очередь заявок", exact: true }).click();
+await bank.getByRole("navigation").getByRole("button", { name: /^Очередь заявок/ }).click();
 const targetRow = bank
   .getByRole("row")
   .filter({ hasText: "ООО Тест интерфейса" })
@@ -110,9 +110,7 @@ await client
 await client
   .getByRole("button", { name: "Принять предложение", exact: true })
   .click();
-await client
-  .getByText("Проверить сформированный договор", { exact: true })
-  .click();
+await client.locator("iframe.contract-preview").waitFor();
 await client.getByLabel("Код подтверждения (демо: 123456)").fill("123456");
 await client
   .getByRole("button", { name: "Подтвердить оформление", exact: true })
