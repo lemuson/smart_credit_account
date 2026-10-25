@@ -24,3 +24,11 @@ def test_chat_request_rejects_oversized_message(chat_request: ChatRequest) -> No
     payload["message"] = "x" * 8001
     with pytest.raises(ValidationError):
         ChatRequest.model_validate(payload)
+
+
+def test_chat_request_1_0_remains_unchanged_for_scoring_context() -> None:
+    schema = ChatRequest.model_json_schema()
+
+    assert schema["properties"]["schema_version"]["const"] == "1.0"
+    assert "assessment_id" not in schema["properties"]
+    assert "what_if_id" not in schema["properties"]

@@ -8,6 +8,12 @@ from pypdf import PdfReader
 from app.rag.models import LoadedDocument
 
 SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf"}
+METADATA_KEYS = {
+    "document_id": "document_id",
+    "id_документа": "document_id",
+    "document_version": "document_version",
+    "версия": "document_version",
+}
 
 
 def clean_text(text: str) -> str:
@@ -36,8 +42,8 @@ def load_document(path: Path) -> LoadedDocument:
         if ":" in line:
             key, value = line.split(":", 1)
             normalized = key.strip().lower().replace(" ", "_")
-            if normalized in {"document_id", "document_version"}:
-                metadata[normalized] = value.strip()
+            if field_name := METADATA_KEYS.get(normalized):
+                metadata[field_name] = value.strip()
     return LoadedDocument(
         document_id=metadata.get("document_id", path.stem),
         source=path.name,

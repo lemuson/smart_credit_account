@@ -8,6 +8,7 @@ from app.schemas.tools import (
     GetApplicationStatusArgs,
     GetProductDetailsArgs,
     GetRequiredDocumentsArgs,
+    GetScoringResultArgs,
     GetUserProfileArgs,
     SearchCreditProductsArgs,
     ValidateApplicationArgs,
@@ -42,6 +43,9 @@ def build_banking_registry(backend: BackendClient) -> ToolRegistry:
 
     async def validate(request: ChatRequest, args: ValidateApplicationArgs):
         return await backend.validate_application(request, args.application_id)
+
+    async def get_scoring_result(request: ChatRequest, args: GetScoringResultArgs):
+        return await backend.get_scoring_result(request, args.assessment_id, args.what_if_id)
 
     definitions = [
         ToolDefinition(
@@ -81,6 +85,14 @@ def build_banking_registry(backend: BackendClient) -> ToolRegistry:
             "Запустить только формальную проверку заявки и получить ошибки без изменения заявки.",
             ValidateApplicationArgs,
             validate,
+        ),
+        ToolDefinition(
+            "get_scoring_result",
+            "Получить сохранённую демонстрационную ML-оценку и ровно шесть факторов по "
+            "assessment_id, а при наличии what_if_id — сохранённый What-if. Только чтение; "
+            "идентичность и доступ проверяет Main Backend.",
+            GetScoringResultArgs,
+            get_scoring_result,
         ),
     ]
     for definition in definitions:

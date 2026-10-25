@@ -7,8 +7,23 @@ from uuid import UUID
 import httpx
 
 from app.core.config import Settings
-from app.core.exceptions import BackendAccessDenied, BackendNotFound, DependencyUnavailable
+from app.core.exceptions import (
+    BackendAccessDenied,
+    BackendConflict,
+    BackendNotFound,
+    DependencyUnavailable,
+    ModelProtocolError,
+)
 from app.schemas.messages import ChatRequest
+
+SCORING_FEATURES = {
+    "annual_revenue",
+    "credit_history",
+    "business_age_months",
+    "loan_amount",
+    "has_collateral",
+    "loan_term_months",
+}
 
 
 class BackendClient:
@@ -55,6 +70,8 @@ class BackendClient:
                 raise BackendAccessDenied("Main Backend denied access") from exc
             if exc.response.status_code == 404:
                 raise BackendNotFound("Requested backend resource was not found") from exc
+            if exc.response.status_code == 409:
+                raise BackendConflict("Main Backend reported a resource conflict") from exc
             if exc.response.status_code >= 500:
                 raise DependencyUnavailable("Main Backend returned a server error") from exc
             raise
@@ -169,3 +186,99 @@ class BackendClient:
         if self._settings.backend_contract == "main":
             return {**payload, "issues": payload["errors"], "decision": None, "is_demo": True}
         return payload
+
+    async def get_scoring_result(
+        self,
+        request: ChatRequest,
+        assessment_id: UUID,
+        what_if_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        params = {"what_if_id": str(what_if_id)} if what_if_id is not None else None
+        payload = await self._request(
+            "GET",
+            f"/api/v1/scoring/assessments/{assessment_id}",
+            request,
+            params=params,
+        )
+        try:
+            if UUID(payload["assessment_id"]) != assessment_id:
+                raise ValueError("assessment id does not match the request")
+            if (
+                payload["schema_version"] != "1.0"
+                or payload["status"] != "completed"
+                or payload["demonstration_only"] is not True
+            ):
+                raise ValueError("unsupported scoring result metadata")
+            factors = payload["explanation"]["factors"]
+            safe_factors = self._scoring_factors(factors)
+            selected_what_if = payload.get("selected_what_if")
+            if what_if_id is not None and selected_what_if is None:
+                raise ValueError("requested what-if is missing from the response")
+            view: dict[str, Any] = {
+                "assessment_id": payload["assessment_id"],
+                "schema_version": payload["schema_version"],
+                "status": payload["status"],
+                "model": {
+                    key: payload["model"][key] for key in ("model_id", "model_version", "family")
+                },
+                "demonstration_only": payload["demonstration_only"],
+                "score": self._scoring_score(payload["score"]),
+                "explanation": {
+                    "baseline": {
+                        key: payload["explanation"]["baseline"][key]
+                        for key in ("method", "logit", "reference_version")
+                    },
+                    "factors": safe_factors,
+                },
+                "limitations_warning": payload["limitations_warning"],
+                "calculated_at": payload["calculated_at"],
+                "selected_what_if": None,
+            }
+            if selected_what_if is not None:
+                if UUID(selected_what_if["what_if_id"]) != what_if_id:
+                    raise ValueError("what-if id does not match the request")
+                if UUID(selected_what_if["assessment_id"]) != assessment_id:
+                    raise ValueError("what-if belongs to another assessment")
+                view["selected_what_if"] = {
+                    "what_if_id": selected_what_if["what_if_id"],
+                    "assessment_id": selected_what_if["assessment_id"],
+                    "schema_version": selected_what_if["schema_version"],
+                    "simulation_only": selected_what_if["simulation_only"],
+                    "changed_fields": selected_what_if["changed_fields"],
+                    "original": self._scoring_snapshot(selected_what_if["original"]),
+                    "alternative": self._scoring_snapshot(selected_what_if["alternative"]),
+                    "delta_percentage_points": selected_what_if["delta_percentage_points"],
+                    "limitations_warning": selected_what_if["limitations_warning"],
+                    "calculated_at": selected_what_if["calculated_at"],
+                }
+            return view
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ModelProtocolError("Main Backend returned an invalid scoring result") from exc
+
+    @staticmethod
+    def _scoring_score(score: dict[str, Any]) -> dict[str, Any]:
+        if score["name"] != "synthetic_model_score":
+            raise ValueError("unsupported score name")
+        return {key: score[key] for key in ("name", "value", "display_percent")}
+
+    @staticmethod
+    def _scoring_factors(factors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(factors) != 6 or {factor["feature"] for factor in factors} != SCORING_FEATURES:
+            raise ValueError("scoring result must contain the six expected factors")
+        keys = (
+            "feature",
+            "display_name",
+            "input_value",
+            "baseline_value",
+            "logit_contribution",
+            "direction",
+            "rank",
+        )
+        return [{key: factor[key] for key in keys} for factor in factors]
+
+    @classmethod
+    def _scoring_snapshot(cls, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "score": cls._scoring_score(snapshot["score"]),
+            "factors": cls._scoring_factors(snapshot["factors"]),
+        }

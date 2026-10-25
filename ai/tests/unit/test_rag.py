@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.rag.chunker import TextChunker
+from app.rag.loader import load_document
 from app.rag.models import LoadedDocument, RetrievedChunk
 from app.rag.retriever import RagIndexer, RagRetriever
 
@@ -22,6 +23,20 @@ class FakeStore:
 
     async def query(self, embedding: list[float], top_k: int, max_distance: float):
         return [RetrievedChunk(self.chunks[0], 0.1)] if self.chunks else []
+
+
+def test_loader_reads_russian_demo_metadata(tmp_path) -> None:
+    path = tmp_path / "KB-03_demo.txt"
+    path.write_text(
+        "ID документа: KB-03\nВерсия: 1.0\n\nУчебный перечень документов.",
+        encoding="utf-8",
+    )
+
+    document = load_document(path)
+
+    assert document.document_id == "KB-03"
+    assert document.version == "1.0"
+    assert document.source == "KB-03_demo.txt"
 
 
 def test_chunk_ids_are_stable() -> None:

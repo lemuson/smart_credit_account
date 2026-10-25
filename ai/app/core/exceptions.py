@@ -18,6 +18,10 @@ class BackendNotFound(AIServiceError):
     code = "BACKEND_NOT_FOUND"
 
 
+class BackendConflict(AIServiceError):
+    code = "BACKEND_CONFLICT"
+
+
 class ToolValidationError(AIServiceError):
     code = "TOOL_VALIDATION_ERROR"
 

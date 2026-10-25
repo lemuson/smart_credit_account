@@ -23,7 +23,9 @@ Main Backend остаётся источником истины для проф�
 не подключается к PostgreSQL, не меняет заявку, не отправляет её и не принимает кредитное решение.
 В самостоятельном демо роль Main Backend выполняет `mock_backend`. Корневой `./start.sh` запускает
 интегрированный контур с настоящим backend (`BACKEND_CONTRACT=main`); см.
-[контракт подключения](docs/backend_integration.md).
+[контракт подключения](docs/backend_integration.md). В интегрированном контуре one-shot сервис
+`ai-ingest` перед запуском worker идемпотентно индексирует семь TXT из
+`rag_demo_credit_cabinet/documents` в общий persistent Chroma volume.
 
 ```mermaid
 sequenceDiagram
@@ -63,13 +65,16 @@ flowchart LR
 - `app/api` — `/health`, `/ready` и сборка зависимостей.
 - `app/messaging` — durable exchanges/queues, ручные подтверждения, ограниченные retry и DLQ.
 - `app/agent` — управление контекстом и цикл реального Ollama tool calling.
-- `app/tools` — явный allow-list из шести read-only инструментов с Pydantic-валидацией.
+- `app/tools` — явный allow-list из семи read-only инструментов с Pydantic-валидацией, включая
+  подготовленный `get_scoring_result` для сохранённых Backend ML-оценок.
 - `app/rag` — загрузка PDF/TXT/Markdown, chunking, embeddings, ChromaDB и retrieval.
 - `mock_backend` — синтетические профили, продукты, заявки, ACL и OpenAPI.
 - `knowledge_base` — согласованная с Mock Backend демонстрационная база знаний.
+- `rag_demo_credit_cabinet` — отдельный корпус и eval-набор для интегрированного Main Backend.
 - `scripts` — индексация, producer, consumer и сквозной smoke test.
 - `tests` — быстрые unit-тесты и отдельно включаемые внешние integration-тесты.
-- `evaluation/dataset.jsonl` — набор сценариев для оценки выбора инструментов и groundedness.
+- `evaluation/dataset.jsonl` — основной набор сценариев выбора инструментов и groundedness;
+  `evaluation/scoring_dataset.jsonl` — 10 сценариев безопасного объяснения ML Scoring.
 - `docs` — контракты интеграции, надёжность очереди и ограничения MVP.
 
 Готовая коллекция ручных HTTP-проверок находится в `docs/postman_collection.json`.
@@ -220,10 +225,12 @@ uv run python evaluation/run.py
 ## Tool Calling и безопасность
 
 Модель получает только схемы `get_user_profile`, `search_credit_products`, `get_product_details`,
-`get_application_status`, `get_required_documents` и `validate_application`. Реестр отклоняет
-неизвестные функции и лишние аргументы. Пользователь и организация никогда не берутся из tool
-arguments: клиент передаёт доверенные идентификаторы и токен из проверенного сообщения, а backend
-снова проверяет ACL. RAG-текст помечается как недоверенный, число tool-циклов ограничено.
+`get_application_status`, `get_required_documents`, `validate_application` и подготовленный
+`get_scoring_result`. Реестр отклоняет неизвестные функции и лишние аргументы. Пользователь и
+организация никогда не берутся из tool arguments: клиент передаёт доверенные идентификаторы и токен
+из проверенного сообщения, а backend снова проверяет ACL. RAG-текст помечается как недоверенный,
+число tool-циклов ограничено. Реальный Scoring API пока должен быть реализован Main Backend; текущая
+AI-интеграция проверена на mock HTTP responses.
 
 ## Надёжность
 
