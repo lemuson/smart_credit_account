@@ -37,6 +37,11 @@ class ValidateApplicationArgs(ToolArguments):
     application_id: UUID
 
 
+class GetScoringResultArgs(ToolArguments):
+    assessment_id: UUID
+    what_if_id: UUID | None = None
+
+
 class ToolExecutionResult(BaseModel):
     name: str
     ok: bool

@@ -34,6 +34,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  ai-ingest:
+    build: .
+    command: ["python", "-m", "scripts.ingest"]
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      CHROMA_PATH: /service/data/chroma
+      CHROMA_COLLECTION: credit_knowledge
+      KNOWLEDGE_BASE_PATH: /service/rag_demo_credit_cabinet/documents
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - chroma_data:/service/data/chroma
+    restart: "no"
+
   ai-worker:
     build: .
     command: ["faststream", "run", "app.messaging.worker:app"]
@@ -46,12 +61,15 @@ services:
       OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:7b-instruct}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
       CHROMA_PATH: /service/data/chroma
-      KNOWLEDGE_BASE_PATH: /service/knowledge_base
+      CHROMA_COLLECTION: credit_knowledge
+      KNOWLEDGE_BASE_PATH: /service/rag_demo_credit_cabinet/documents
     extra_hosts:
       - host.docker.internal:host-gateway
     volumes:
       - chroma_data:/service/data/chroma
     depends_on:
+      ai-ingest:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
       rabbitmq:

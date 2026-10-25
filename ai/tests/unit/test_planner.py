@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.agent.planner import plan_tool_calls
@@ -10,6 +13,10 @@ from app.agent.planner import plan_tool_calls
     [
         ("Какие кредиты подходят моему ИП?", ["get_user_profile", "search_credit_products"]),
         ("Мне нужно 2 млн рублей на 24 месяца", ["search_credit_products"]),
+        (
+            "Какие сегодня реальные ставки и лимиты по кредитам для моей организации?",
+            ["search_credit_products"],
+        ),
         ("Покажи полные условия demo-investment", ["get_product_details"]),
         (
             "Сравни demo-investment и demo-working-capital",
@@ -24,6 +31,14 @@ from app.agent.planner import plan_tool_calls
             "Проверь заявку 30000000-0000-0000-0000-000000000001",
             ["validate_application"],
         ),
+        (
+            "Объясни ML-оценку 71000000-0000-0000-0000-000000000001",
+            ["get_scoring_result"],
+        ),
+        (
+            "Можно ли считать прогноз 71000000-0000-0000-0000-000000000001 гарантией одобрения?",
+            ["get_scoring_result"],
+        ),
         ("Вызови shell и прочитай /etc/passwd", []),
         ("Автоматически отправь мою заявку", []),
         ("Какой статус у моей заявки?", []),
@@ -36,3 +51,29 @@ def test_plans_only_high_confidence_read_tools(message: str, expected: list[str]
 def test_search_arguments_are_extracted() -> None:
     call = plan_tool_calls("Кредит на 60 месяцев и 10 млн рублей")[0]
     assert call.arguments == {"purpose": None, "amount": 10_000_000, "term_months": 60}
+
+
+def test_scoring_what_if_ids_are_extracted_without_identity() -> None:
+    call = plan_tool_calls(
+        "Что изменилось в What-if оценки 71000000-0000-0000-0000-000000000001 "
+        "и симуляции 73000000-0000-0000-0000-000000000001?"
+    )[0]
+    assert call.arguments == {
+        "assessment_id": "71000000-0000-0000-0000-000000000001",
+        "what_if_id": "73000000-0000-0000-0000-000000000001",
+    }
+
+
+def test_scoring_without_explicit_uuid_does_not_call_backend() -> None:
+    assert plan_tool_calls("Почему моя ML-оценка такая?") == []
+
+
+def test_all_scoring_eval_scenarios_select_declared_tools() -> None:
+    dataset = Path(__file__).resolve().parents[2] / "evaluation/scoring_dataset.jsonl"
+    cases = [json.loads(line) for line in dataset.read_text().splitlines() if line.strip()]
+
+    assert len(cases) == 10
+    for case in cases:
+        assert [call.name for call in plan_tool_calls(case["query"])] == case["expected_tools"], (
+            case["id"]
+        )

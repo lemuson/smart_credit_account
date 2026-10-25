@@ -39,6 +39,7 @@ ml = [
 [project.scripts]
 ai-ingest = "scripts.ingest:main"
 ai-smoke-test = "scripts.smoke_test:main"
+ai-evaluate-rag-demo = "scripts.evaluate_rag_demo:main"
 
 [build-system]
 requires = ["hatchling"]

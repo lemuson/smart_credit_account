@@ -12,6 +12,15 @@ UUID_PATTERN = re.compile(
 )
 PRODUCT_ID_PATTERN = re.compile(r"\b[a-z][a-z0-9]*(?:-[a-z0-9]+)+\b", re.IGNORECASE)
 
+DEMO_KNOWLEDGE_PATTERN = re.compile(
+    r"\bKB-\d{2}\b|"
+    r"\b(?:учебн|демонстрационн)\w*(?:\s+\w+){0,3}\s+"
+    r"(?:чек[-\s]?лист|комплект|перечень|пример|база|материал|документ)\w*|"
+    r"\b(?:чек[-\s]?лист|комплект|перечень)\w*(?:\s+\w+){0,3}\s+"
+    r"(?:учебн|демонстрационн)\w*",
+    re.IGNORECASE,
+)
+
 _NO_READ_TOOL_PATTERNS = (
     r"системн\w*\s+промпт",
     r"(?:вызови|запусти)\s+shell",
@@ -66,20 +75,35 @@ def _purpose(message: str) -> str | None:
     return purpose[:200] or None
 
 
+def requests_demo_knowledge(message: str) -> bool:
+    """Return whether the user explicitly asks about the demo knowledge corpus."""
+    return bool(DEMO_KNOWLEDGE_PATTERN.search(message))
+
+
 def plan_tool_calls(message: str) -> list[ToolCall]:
     """Plan only high-confidence read-only calls; ambiguous requests stay with the LLM."""
     normalized = message.casefold()
+    uuid_matches = [str(UUID(value)) for value in UUID_PATTERN.findall(message)]
+    scoring_intent = re.search(
+        r"ml[-\s]?оцен|скоринг|\bscoring\b|assessment|what[-\s]?if|симуляц|\bпрогноз\w*|"
+        r"(?:оценк|прогноз).*(?:фактор|признак|logit|процент|гарант)|"
+        r"(?:фактор|признак|logit|гарант).*(?:оценк|прогноз)",
+        normalized,
+    )
+    if uuid_matches and scoring_intent:
+        arguments = {"assessment_id": uuid_matches[0]}
+        if len(uuid_matches) > 1:
+            arguments["what_if_id"] = uuid_matches[1]
+        return [ToolCall(name="get_scoring_result", arguments=arguments)]
+
     if any(re.search(pattern, normalized) for pattern in _NO_READ_TOOL_PATTERNS):
         return []
 
-    uuid_match = UUID_PATTERN.search(message)
-    if uuid_match:
-        application_id = str(UUID(uuid_match.group(0)))
+    if uuid_matches:
+        application_id = uuid_matches[0]
         if re.search(r"прове\w*|ошиб\w*|заполн\w*", normalized):
             return [
-                ToolCall(
-                    name="validate_application", arguments={"application_id": application_id}
-                )
+                ToolCall(name="validate_application", arguments={"application_id": application_id})
             ]
         if re.search(r"статус|что\s+.*дальше|следующ\w*\s+действ", normalized):
             return [
@@ -110,7 +134,8 @@ def plan_tool_calls(message: str) -> list[ToolCall]:
 
     search_intent = re.search(
         r"кредитн\w*\s+продукт|какие\s+кредит|подбер\w*\s+.*кредит|"
-        r"что\s+подходит|мне\s+нужн|нужн\w*\s+деньг|кредит\s+на|назови\s+ставк",
+        r"что\s+подходит|мне\s+нужн|нужн\w*\s+деньг|кредит\s+на|назови\s+ставк|"
+        r"(?:ставк|лимит)\w*.*кредит|кредит\w*.*(?:ставк|лимит)",
         normalized,
     )
     if not search_intent:

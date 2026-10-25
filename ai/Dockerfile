@@ -13,6 +13,7 @@ COPY app app
 COPY mock_backend mock_backend
 COPY scripts scripts
 COPY knowledge_base knowledge_base
+COPY rag_demo_credit_cabinet rag_demo_credit_cabinet
 COPY docs docs
 RUN uv sync --frozen --no-dev
 
@@ -22,4 +23,3 @@ USER app
 ENV PATH="/service/.venv/bin:$PATH"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
-

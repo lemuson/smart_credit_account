@@ -1,0 +1,47 @@
+{
+  "corpus_version": "rag-demo-1.0",
+  "documents": [
+    {
+      "filename": "KB-01_границы_базы_знаний.txt",
+      "doc_id": "KB-01",
+      "sha256": "2af47de9c75224c727875db51c503709797adb04f10fcbfb204b282cb4a02062",
+      "bytes": 3589
+    },
+    {
+      "filename": "KB-02_порядок_подачи_заявки.txt",
+      "doc_id": "KB-02",
+      "sha256": "98cc68388c48a7cbcaf5c001e458a33bba60401ca82a9042c409d1b6ee834482",
+      "bytes": 3501
+    },
+    {
+      "filename": "KB-03_учебный_перечень_документов.txt",
+      "doc_id": "KB-03",
+      "sha256": "1fac5bf9aee86860248afeebc5ec85ee64170058ebe028e311759fe67de191fd",
+      "bytes": 4109
+    },
+    {
+      "filename": "KB-04_залог_и_обеспечение.txt",
+      "doc_id": "KB-04",
+      "sha256": "8c8ad32ba0b3c22d726981a7c875287b1def51298b6cece8ec00c5ee13752b3e",
+      "bytes": 3611
+    },
+    {
+      "filename": "KB-05_выручка_кредитная_история_и_сроки.txt",
+      "doc_id": "KB-05",
+      "sha256": "80d6b8b4e5c9e6dc0e4680e9fe148a3434b2265764aff57babbc2773e3dd19ad",
+      "bytes": 3613
+    },
+    {
+      "filename": "KB-06_демо_ml_оценка_и_what_if.txt",
+      "doc_id": "KB-06",
+      "sha256": "4d720759b3a88274ebf78ea08b8f94d78505310f26d1100df08eb061a9fa68cd",
+      "bytes": 4444
+    },
+    {
+      "filename": "KB-07_вопросы_ответы_и_ограничения.txt",
+      "doc_id": "KB-07",
+      "sha256": "f3344ff99d3023025f97a6bfd7d1dfb8e44b7f14bbf855f200530190456c05e5",
+      "bytes": 4276
+    }
+  ]
+}
