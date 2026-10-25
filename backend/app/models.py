@@ -8,6 +8,7 @@ from app.notifications.models import NotificationRead
 from app.products.models import Product
 from app.profiles.models import Profile
 from app.risk.models import RiskPolicy, RiskPolicyRevision
+from app.scoring.models import ScoringAssessment, ScoringRequest, ScoringWhatIf
 from app.seed import SeedRun
 
 __all__ = [
@@ -26,4 +27,7 @@ __all__ = [
     "RiskPolicy",
     "RiskPolicyRevision",
     "SeedRun",
+    "ScoringAssessment",
+    "ScoringRequest",
+    "ScoringWhatIf",
 ]

@@ -98,6 +98,7 @@ def delegated_user(request, db, token):
             path in {"/api/v1/profile", "/api/v1/credit-products/search"}
             or re.fullmatch(r"/api/v1/credit-products/[0-9a-f-]{36}(/required-documents)?", path)
             or re.fullmatch(r"/api/v1/applications/[0-9a-f-]{36}/status", path)
+            or re.fullmatch(r"/api/v1/scoring/assessments/[0-9a-f-]{36}", path)
         )
     ) or (
         request.method == "POST"

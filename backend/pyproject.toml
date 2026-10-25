@@ -5,6 +5,7 @@ description = "Backend кредитного кабинета предприни�
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+  "ml-scoring",
   "aio-pika>=9.5,<10",
   "fastapi>=0.121,<1",
   "uvicorn>=0.34,<1",
@@ -25,6 +26,7 @@ dev = [
     "httpx>=0.28,<1",
     "ruff>=0.11,<1",
     "pypdf>=6,<7",
+    "jsonschema>=4,<5",
 ]
 
 [tool.ruff]
@@ -36,6 +38,10 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"]
 
 [tool.pytest.ini_options]
-markers = ["rabbitmq: requires an isolated RabbitMQ via TEST_RABBITMQ_URL"]
+markers = ["rabbitmq: requires an isolated RabbitMQ via TEST_RABBITMQ_URL",
+           "scoring_e2e: requires approved model artifacts via SCORING_E2E_MODELS_DIR"]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.uv.sources]
+ml-scoring = { path = "../ai/ml_scoring" }

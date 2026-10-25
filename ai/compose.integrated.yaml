@@ -18,6 +18,8 @@ services:
     image: smart-credit-backend:local
     build:
       context: ../backend
+      additional_contexts:
+        ml_scoring: ./ml_scoring
       target: production
     command: ["python", "-m", "app.ai.worker"]
     env_file: ../backend/.env

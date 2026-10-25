@@ -3,6 +3,8 @@ name: smart-credit
 x-backend: &backend
   build:
     context: .
+    additional_contexts:
+      ml_scoring: ../ai/ml_scoring
     target: production
   image: smart-credit-backend:local
   environment: &backend-environment
@@ -13,6 +15,7 @@ x-backend: &backend
     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
     AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-}
+    SCORING_MODELS_DIR: /models
     TOKEN_MINUTES: ${TOKEN_MINUTES:-60}
     MAX_DOCUMENT_BYTES: ${MAX_DOCUMENT_BYTES:-10485760}
 
@@ -50,6 +53,13 @@ services:
 
   api:
     <<: *backend
+    volumes:
+      - type: bind
+        source: ${SCORING_MODELS_DIR:-../ai/ml_scoring/models}
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: true
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
@@ -64,6 +74,8 @@ services:
   tests:
     build:
       context: .
+      additional_contexts:
+        ml_scoring: ../ai/ml_scoring
       target: test
     profiles: ["test"]
     environment:
