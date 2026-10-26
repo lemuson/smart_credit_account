@@ -50,11 +50,8 @@ dist/
 data/chroma/
 
 # Generated ML datasets and reports
-ml_scoring/data/*.csv
-ml_scoring/data/*.json
 ml_scoring/reports/figures/
 ml_scoring/reports/*.json
 
 # Generated model binaries and derived metadata
-ml_scoring/models/
 evaluation/results/

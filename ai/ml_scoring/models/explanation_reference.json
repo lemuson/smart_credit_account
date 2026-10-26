@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "training_version": "1.0",
+  "model_bundle_sha256": "0c393f9b54d4b50d28a9c01d3d4f1343aa99af55edf044c8e11192e846702fe3",
+  "source": "synthetic_credit_train.csv",
+  "source_sha256": "98ed2f5f8263344b95778ecf81ad79bd4437d18505a4b7fe5b5e787162a322a0",
+  "row_count": 14000,
+  "feature_columns": [
+    "annual_revenue",
+    "credit_history",
+    "business_age_months",
+    "loan_amount",
+    "has_collateral",
+    "loan_term_months"
+  ],
+  "sklearn_version": "1.9.1",
+  "baseline_method": "mean_in_transformed_train_space",
+  "transformed_feature_names": [
+    "annual_revenue",
+    "loan_amount",
+    "business_age_months",
+    "loan_term_months",
+    "credit_history_average",
+    "credit_history_bad",
+    "credit_history_good",
+    "credit_history_none",
+    "has_collateral"
+  ],
+  "transformed_mean": [
+    -5.122886242198936e-16,
+    1.0586452349668564e-15,
+    2.3187800885742555e-17,
+    2.877698079828406e-16,
+    0.31792857142857145,
+    0.13135714285714287,
+    0.37285714285714283,
+    0.17785714285714285,
+    0.2615
+  ],
+  "original_reference_values": {
+    "annual_revenue": 3100150.2539505637,
+    "credit_history": {
+      "good": 0.37285714285714283,
+      "average": 0.31792857142857145,
+      "bad": 0.13135714285714287,
+      "none": 0.17785714285714285
+    },
+    "business_age_months": 51.50957142857143,
+    "loan_amount": 1084206.829326128,
+    "has_collateral": 0.2615,
+    "loan_term_months": 20.962714285714284
+  }
+}

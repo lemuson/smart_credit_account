@@ -1,0 +1,19 @@
+{
+  "feature_columns": [
+    "annual_revenue",
+    "credit_history",
+    "business_age_months",
+    "loan_amount",
+    "has_collateral",
+    "loan_term_months"
+  ],
+  "target_column": "approved",
+  "age_used_for_prediction": false,
+  "credit_history_categories": [
+    "good",
+    "average",
+    "bad",
+    "none"
+  ],
+  "threshold": 0.5
+}

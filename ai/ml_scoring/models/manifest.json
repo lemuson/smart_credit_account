@@ -1,0 +1,20 @@
+{
+  "trusted_local_artifacts_only": true,
+  "final_bundle_sha256": "0c393f9b54d4b50d28a9c01d3d4f1343aa99af55edf044c8e11192e846702fe3",
+  "artifacts": {
+    "catboost_model.cbm": "30b84a9b96b7abbea504b616109a051bc8266998d08d895148924e4594b988a9",
+    "credit_scoring_model.joblib": "0c393f9b54d4b50d28a9c01d3d4f1343aa99af55edf044c8e11192e846702fe3",
+    "input_schema.json": "d4d3518884d7b4b115ff4597295d28a7ce9fcb3080ba8e1e992fa1755ee0d81c",
+    "logistic_baseline.joblib": "320a5676087b84b9b79ca44951a0e0f3ab170e47e4ec617d026348439cec8282",
+    "probability_calibrator.joblib": "f28060a544658c32ce6c5bb09a064c45e27c16ff99d9867706332a88495afa20",
+    "explanation_reference.json": "771a4e7f6933a5e7794580be61208b7e49d953660f614d5c7c47b8c66f37d9f6"
+  },
+  "selected_model_family": "logistic_regression",
+  "selected_calibration": "not_applicable",
+  "training_config_sha256": "85654f7ffa995e51fe9bddb4e9922d98c18631c2621990471ca0bbfc75f58bdc",
+  "selection_correction_after_test": true,
+  "test_csv_reopened": false,
+  "model_id": "synthetic-credit-logreg",
+  "model_version": "1.0",
+  "schema_version": "1.0"
+}
