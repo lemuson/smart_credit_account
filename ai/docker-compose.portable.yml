@@ -1,27 +1,51 @@
 services:
   ollama:
-    image: ollama/ollama:0.33.3
+    image: ollama/ollama:latest
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:7b-instruct}
+    entrypoint: /bin/sh
+    command:
+      - "-c"
+      - |
+        echo "Waiting for Ollama to become available..."
+        until ollama list >/dev/null 2>&1; do
+          sleep 2
+        done
+        echo "Pulling embedding model ($$OLLAMA_EMBEDDING_MODEL)..."
+        ollama pull "$$OLLAMA_EMBEDDING_MODEL"
+        echo "Pulling LLM model ($$OLLAMA_LLM_MODEL)..."
+        ollama pull "$$OLLAMA_LLM_MODEL"
+        echo "Ollama models are ready."
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
 
   ai-api:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
     depends_on:
-      ollama:
-        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
 
   ai-worker:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
     depends_on:
-      ollama:
-        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
 
 volumes:
   ollama-data:

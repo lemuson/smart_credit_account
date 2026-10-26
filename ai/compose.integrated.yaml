@@ -36,11 +36,48 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:7b-instruct}
+    entrypoint: /bin/sh
+    command:
+      - "-c"
+      - |
+        echo "Waiting for Ollama to become available..."
+        until ollama list >/dev/null 2>&1; do
+          sleep 2
+        done
+        echo "Pulling embedding model ($$OLLAMA_EMBEDDING_MODEL)..."
+        ollama pull "$$OLLAMA_EMBEDDING_MODEL"
+        echo "Pulling LLM model ($$OLLAMA_LLM_MODEL)..."
+        ollama pull "$$OLLAMA_LLM_MODEL"
+        echo "Ollama models are ready."
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
   ai-ingest:
     build: .
     command: ["python", "-m", "scripts.ingest"]
     environment:
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
       CHROMA_PATH: /service/data/chroma
       CHROMA_COLLECTION: credit_knowledge
@@ -49,6 +86,9 @@ services:
       - host.docker.internal:host-gateway
     volumes:
       - chroma_data:/service/data/chroma
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
     restart: "no"
 
   ai-worker:
@@ -59,7 +99,7 @@ services:
       BACKEND_CONTRACT: main
       BACKEND_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       RABBITMQ_URL: amqp://credit-ai:${AI_SERVICE_TOKEN}@rabbitmq:5672/
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:7b-instruct}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
       CHROMA_PATH: /service/data/chroma
@@ -72,6 +112,8 @@ services:
     depends_on:
       ai-ingest:
         condition: service_completed_successfully
+      ollama:
+        condition: service_healthy
       api:
         condition: service_healthy
       rabbitmq:
@@ -82,3 +124,4 @@ services:
 volumes:
   rabbitmq_data:
   chroma_data:
+  ollama_data:

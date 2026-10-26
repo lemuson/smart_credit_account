@@ -109,11 +109,34 @@ export const auditActions = {
   CONTRACT_GENERATED: "Сформирован договор", SIGNING_CODE_REJECTED: "Неверный код подписания",
   DEMO_CONTRACT_SIGNED: "Договор подписан, кредит оформлен",
   DOCUMENT_UPLOADED: "Загружен документ", DOCUMENT_DELETED: "Удалён документ",
+  "scoring.assessment": "Рассчитана ML-оценка заявки",
+  "scoring.what_if": "Выполнена симуляция What-if",
 };
 export const factorLabels = {
   BUSINESS_AGE: "Срок работы бизнеса", REVENUE_TO_LOAN: "Соотношение выручки и суммы кредита",
   PROFIT_MARGIN: "Рентабельность", CREDIT_DISCIPLINE: "Кредитная дисциплина", TAX_DISCIPLINE: "Налоговая дисциплина",
 };
+export const scoringFeatureLabels = {
+  annual_revenue: "Годовая выручка",
+  credit_history: "Кредитная история",
+  business_age_months: "Срок работы бизнеса",
+  loan_amount: "Сумма кредита",
+  has_collateral: "Наличие залога",
+  loan_term_months: "Срок кредита",
+};
+export const creditHistoryLabels = {
+  good: "Без просрочек",
+  average: "Были небольшие задержки",
+  bad: "Были просрочки",
+  none: "Нет истории",
+};
+export function formatFeatureValue(feature, value) {
+  if (feature === "annual_revenue" || feature === "loan_amount") return money(value);
+  if (feature === "business_age_months" || feature === "loan_term_months") return `${value} мес.`;
+  if (feature === "has_collateral") return value ? "Есть залог" : "Без залога";
+  if (feature === "credit_history") return creditHistoryLabels[value] || value;
+  return String(value);
+}
 export const discrepancyLabels = {
   UNDERSTATED_MONTHLY_PAYMENTS: "Платежи по кредитам в заявке ниже платежей по действующим кредитам",
   UNDERSTATED_OUTSTANDING_DEBT: "Остаток долга в заявке ниже долга по действующим кредитам",

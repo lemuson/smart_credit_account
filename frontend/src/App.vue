@@ -10,7 +10,13 @@ import {
 } from "vue";
 import Icon from "./components/Icon.vue";
 import { applicationFinancials, draftData, draftFingerprint, externalFields, profileDifferences } from "./applicationForm.js";
-import { api, setToken } from "./api";
+import {
+  api,
+  setToken,
+  createScoringAssessment,
+  getScoringAssessment,
+  createScoringWhatIf,
+} from "./api";
 import {
   validInn, fieldLabels, auditActions, factorLabels, discrepancyLabels, checkRows, reviewSummary,
   purposes,
@@ -23,6 +29,9 @@ import {
   matches,
   emptyCompany,
   emptyFinancials,
+  scoringFeatureLabels,
+  creditHistoryLabels,
+  formatFeatureValue,
 } from "./domain";
 const tabs = [
   { id: "home", name: "Главная", icon: "Home" },
@@ -74,6 +83,21 @@ const notificationLoading = ref(false);
 const contractUrl = ref("");
 const contractLoading = ref(false);
 let contractGeneration = 0;
+const scoringAssessment = ref(null),
+  scoringLoading = ref(false),
+  scoringError = ref(""),
+  whatIfResult = ref(null),
+  whatIfLoading = ref(false),
+  whatIfError = ref(""),
+  activeScoringContext = ref(null);
+const whatIfForm = reactive({
+  annual_revenue: 1000000,
+  loan_amount: 1000000,
+  loan_term_months: 24,
+  credit_history: "good",
+  has_collateral: false,
+  business_age_months: 24,
+});
 const chatBusy = ref(false), chatConversation = ref(null);
 let chatGeneration = 0;
 const chatInput = ref(""),
@@ -382,10 +406,142 @@ async function prepareForm(application) {
   signingCode.value = "";
   draftNonce = application.id || crypto.randomUUID();
   modal.value = "application";
+  scoringAssessment.value = null;
+  whatIfResult.value = null;
+  scoringError.value = "";
+  whatIfError.value = "";
+  if (application.id && !isOfficer.value) {
+    const lastScoring = application.history?.filter((e) => e.action === "scoring.assessment").at(-1);
+    if (lastScoring?.details?.resource_id) {
+      loadSavedScoring(lastScoring.details.resource_id);
+    }
+  }
   await nextTick();
   formBaseline = lastSavedDraft = formFingerprint.value;
   draftSaved.value = !!application.id;
   draftHydrating = false;
+}
+function initWhatIfFromAssessment(assessment) {
+  const factors = assessment?.explanation?.factors || [];
+  const getVal = (feat) => factors.find((f) => f.feature === feat)?.input_value;
+  whatIfForm.annual_revenue = Number(getVal("annual_revenue") ?? current.value?.financials?.annual_revenue ?? 1000000);
+  whatIfForm.loan_amount = Number(getVal("loan_amount") ?? current.value?.amount ?? 1000000);
+  whatIfForm.loan_term_months = Number(getVal("loan_term_months") ?? current.value?.term_months ?? 24);
+  whatIfForm.credit_history = getVal("credit_history") ?? current.value?.financials?.credit_history ?? "good";
+  whatIfForm.has_collateral = Boolean(getVal("has_collateral") ?? current.value?.financials?.has_collateral ?? false);
+  whatIfForm.business_age_months = Number(getVal("business_age_months") ?? 24);
+}
+async function loadSavedScoring(assessmentId) {
+  scoringLoading.value = true;
+  scoringError.value = "";
+  try {
+    const res = await getScoringAssessment(assessmentId);
+    scoringAssessment.value = res;
+    initWhatIfFromAssessment(res);
+    activeScoringContext.value = {
+      assessment_id: res.assessment_id,
+      display_percent: res.score?.display_percent,
+      application_id: current.value?.id,
+      what_if_id: null,
+    };
+  } catch (e) {
+    scoringError.value = e.message;
+  } finally {
+    scoringLoading.value = false;
+  }
+}
+async function runScoring() {
+  if (!current.value?.id) return;
+  scoringLoading.value = true;
+  scoringError.value = "";
+  whatIfResult.value = null;
+  whatIfError.value = "";
+  try {
+    const res = await createScoringAssessment(current.value.id, current.value.version);
+    scoringAssessment.value = res;
+    initWhatIfFromAssessment(res);
+    activeScoringContext.value = {
+      assessment_id: res.assessment_id,
+      display_percent: res.score?.display_percent,
+      application_id: current.value.id,
+      what_if_id: null,
+    };
+    flash("Кредитный рейтинг успешно рассчитан");
+    await reloadCurrent();
+  } catch (e) {
+    scoringError.value = e.message;
+  } finally {
+    scoringLoading.value = false;
+  }
+}
+async function runWhatIf() {
+  if (!scoringAssessment.value?.assessment_id) return;
+  whatIfLoading.value = true;
+  whatIfError.value = "";
+  try {
+    const originalFactors = scoringAssessment.value.explanation?.factors || [];
+    const getOrig = (feat) => originalFactors.find((f) => f.feature === feat)?.input_value;
+    const changes = {};
+    if (Number(whatIfForm.annual_revenue) !== Number(getOrig("annual_revenue"))) {
+      changes.annual_revenue = Number(whatIfForm.annual_revenue);
+    }
+    if (Number(whatIfForm.loan_amount) !== Number(getOrig("loan_amount"))) {
+      changes.loan_amount = Number(whatIfForm.loan_amount);
+    }
+    if (Number(whatIfForm.loan_term_months) !== Number(getOrig("loan_term_months"))) {
+      changes.loan_term_months = Number(whatIfForm.loan_term_months);
+    }
+    if (whatIfForm.credit_history !== getOrig("credit_history")) {
+      changes.credit_history = whatIfForm.credit_history;
+    }
+    if (Boolean(whatIfForm.has_collateral) !== Boolean(getOrig("has_collateral"))) {
+      changes.has_collateral = Boolean(whatIfForm.has_collateral);
+    }
+    if (Number(whatIfForm.business_age_months) !== Number(getOrig("business_age_months"))) {
+      changes.business_age_months = Number(whatIfForm.business_age_months);
+    }
+    if (!Object.keys(changes).length) {
+      throw new Error("Измените хотя бы один показатель для симуляции What-if.");
+    }
+    const res = await createScoringWhatIf(scoringAssessment.value.assessment_id, changes);
+    whatIfResult.value = res;
+    if (activeScoringContext.value) {
+      activeScoringContext.value.what_if_id = res.what_if_id;
+    }
+    flash("Симуляция What-if рассчитана");
+  } catch (e) {
+    whatIfError.value = e.message;
+  } finally {
+    whatIfLoading.value = false;
+  }
+}
+async function askAiAboutScoring(mode = "explain") {
+  const aid = scoringAssessment.value?.assessment_id || activeScoringContext.value?.assessment_id;
+  if (!aid) return;
+  const percent = scoringAssessment.value?.score?.display_percent?.toFixed(1) ||
+    activeScoringContext.value?.display_percent?.toFixed(1) || "";
+  let query = "";
+  if (mode === "explain") {
+    query = `Почему моя ML-оценка ${aid} равна ${percent}%? Какие факторы больше всего повлияли?`;
+  } else if (mode === "improve") {
+    query = `Что можно изменить в параметрах заявки, чтобы повысить кредитный рейтинг по оценке ${aid}?`;
+  } else if (mode === "what_if") {
+    const wid = whatIfResult.value?.what_if_id || activeScoringContext.value?.what_if_id;
+    if (wid) {
+      const delta = whatIfResult.value ? (whatIfResult.value.delta_percentage_points > 0 ? `+${whatIfResult.value.delta_percentage_points.toFixed(1)}` : whatIfResult.value.delta_percentage_points.toFixed(1)) : "";
+      query = `Что изменилось в сохранённом What-if оценки ${aid} и симуляции ${wid}? ${delta ? 'Почему дельта составила ' + delta + ' процентных пункта?' : ''}`.trim();
+    }
+  } else if (typeof mode === "string" && mode.startsWith("factor:")) {
+    const featureName = mode.split(":")[1];
+    const label = scoringFeatureLabels[featureName] || featureName;
+    query = `Объясни, как фактор "${label}" повлиял на мою ML-оценку ${aid} и что означает его вклад в logit?`;
+  }
+  if (query) {
+    modal.value = null;
+    navigate("assistant");
+    await nextTick();
+    await assistant(query);
+  }
 }
 async function startNewForm(product) {
   await prepareForm({
@@ -1414,6 +1570,27 @@ onUnmounted(() => {
             </p>
           </div>
           <aside class="panel suggestions">
+            <div v-if="activeScoringContext" class="scoring-chat-context">
+              <div class="scoring-context-header">
+                <span class="quick-icon"><Icon name="Gauge" :size="16" /></span>
+                <div>
+                  <small>ML-ОЦЕНКА ЗАЯВКИ</small>
+                  <strong>Вероятность {{ activeScoringContext.display_percent?.toFixed(1) }}%</strong>
+                </div>
+              </div>
+              <button class="scoring-context-query" @click="askAiAboutScoring('explain')">
+                <span>Почему оценка {{ activeScoringContext.display_percent?.toFixed(1) }}%?</span>
+                <Icon name="ArrowUpRight" :size="14" />
+              </button>
+              <button class="scoring-context-query" @click="askAiAboutScoring('improve')">
+                <span>Как повысить рейтинг?</span>
+                <Icon name="ArrowUpRight" :size="14" />
+              </button>
+              <button v-if="activeScoringContext.what_if_id" class="scoring-context-query" @click="askAiAboutScoring('what_if')">
+                <span>Что изменилось в What-if?</span>
+                <Icon name="ArrowUpRight" :size="14" />
+              </button>
+            </div>
             <span class="mini-label">С ЧЕГО НАЧНЁМ?</span>
             <h2>Частые вопросы</h2>
             <button
@@ -2024,6 +2201,254 @@ onUnmounted(() => {
             >
               Ожидаем ответ предпринимателя.
             </p>
+          </section>
+          <section v-if="!isOfficer && current.id" class="scoring-section">
+            <div class="scoring-header">
+              <div>
+                <span class="eyebrow">ML ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ</span>
+                <h3><Icon name="Gauge" :size="22" /> Кредитный рейтинг и вероятность одобрения</h3>
+              </div>
+              <button
+                v-if="scoringAssessment"
+                class="secondary"
+                :disabled="scoringLoading"
+                @click="runScoring"
+              >
+                <Icon name="RotateCcw" :size="16" /> Пересчитать оценку
+              </button>
+            </div>
+
+            <div v-if="scoringError" class="alert warning">
+              <Icon name="CircleHelp" />
+              <div>
+                <strong>Не удалось рассчитать скоринг</strong>
+                <p>{{ scoringError }}</p>
+                <button class="secondary small" :disabled="scoringLoading" @click="runScoring">
+                  Повторить попытку
+                </button>
+              </div>
+            </div>
+
+            <div v-if="!scoringAssessment && !scoringLoading && !scoringError" class="scoring-empty-state">
+              <span class="quick-icon"><Icon name="Zap" :size="28" /></span>
+              <h4>Узнайте вероятность одобрения кредита</h4>
+              <p>
+                Интеллектуальная ML-модель мгновенно оценит заявку по 6 финансовым показателям бизнеса,
+                покажет факторы влияния и позволит смоделировать симуляцию What-if.
+              </p>
+              <button class="primary" :disabled="scoringLoading" @click="runScoring">
+                <Icon name="Zap" :size="18" /> Рассчитать кредитный рейтинг
+              </button>
+            </div>
+
+            <div v-if="scoringLoading" class="scoring-empty-state">
+              <span class="live-dot"></span>
+              <h4>Выполняем ML-скоринг заявки…</h4>
+              <p>Анализируем выручку, срок бизнеса, кредитную историю и рассчитываем вклад признаков.</p>
+            </div>
+
+            <template v-if="scoringAssessment">
+              <div class="scoring-hero">
+                <div class="scoring-score-box">
+                  <span class="eyebrow">ВЕРОЯТНОСТЬ ОДОБРЕНИЯ</span>
+                  <div
+                    :class="[
+                      'scoring-score-value',
+                      scoringAssessment.score.display_percent >= 70
+                        ? 'high'
+                        : scoringAssessment.score.display_percent >= 40
+                          ? 'medium'
+                          : 'low',
+                    ]"
+                  >
+                    {{ scoringAssessment.score.display_percent.toFixed(1) }}%
+                  </div>
+                  <div class="scoring-progress-track">
+                    <div
+                      :class="[
+                        'scoring-progress-fill',
+                        scoringAssessment.score.display_percent >= 70
+                          ? 'high'
+                          : scoringAssessment.score.display_percent >= 40
+                            ? 'medium'
+                            : 'low',
+                      ]"
+                      :style="{ width: Math.min(100, Math.max(0, scoringAssessment.score.display_percent)) + '%' }"
+                    ></div>
+                  </div>
+                  <span
+                    :class="[
+                      'scoring-level-badge',
+                      scoringAssessment.score.display_percent >= 70
+                        ? 'high'
+                        : scoringAssessment.score.display_percent >= 40
+                          ? 'medium'
+                          : 'low',
+                    ]"
+                  >
+                    {{
+                      scoringAssessment.score.display_percent >= 70
+                        ? "Высокая вероятность"
+                        : scoringAssessment.score.display_percent >= 40
+                          ? "Умеренная вероятность"
+                          : "Повышенный риск"
+                    }}
+                  </span>
+                </div>
+                <div class="scoring-info">
+                  <div class="scoring-meta-tags">
+                    <span class="scoring-tag">Модель: {{ scoringAssessment.model?.model_id || 'logistic_regression' }}</span>
+                    <span class="scoring-tag">Версия: {{ scoringAssessment.model?.model_version || '1.0' }}</span>
+                    <span class="scoring-tag">ID: {{ scoringAssessment.assessment_id.slice(0, 8) }}…</span>
+                  </div>
+                  <p class="muted small">
+                    {{ scoringAssessment.limitations_warning || "Демонстрационная оценка на базе синтетической модели. Не является решением банка." }}
+                  </p>
+                  <div class="scoring-ai-callout">
+                    <div>
+                      <strong>Хотите подробный разбор этой оценки?</strong>
+                      <p>AI-помощник объяснит логику модели, вклад каждого фактора и даст рекомендации.</p>
+                    </div>
+                    <button class="btn-ai-sparkle" @click="askAiAboutScoring('explain')">
+                      <Icon name="Sparkles" :size="16" /> Объяснить с AI
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Factors (Explainable AI) -->
+              <div class="scoring-subheading">
+                <span>Факторы, повлиявшие на скоринг (XAI)</span>
+                <small class="muted">6 признаков · Вклад в скоринговый лоджит</small>
+              </div>
+              <div class="factors-grid">
+                <div
+                  v-for="factor in scoringAssessment.explanation?.factors || []"
+                  :key="factor.feature"
+                  class="factor-card"
+                >
+                  <div class="factor-top">
+                    <span class="factor-name">{{ factor.display_name || scoringFeatureLabels[factor.feature] || factor.feature }}</span>
+                    <span class="factor-rank">#{{ factor.rank }}</span>
+                  </div>
+                  <div class="factor-values">
+                    <div>
+                      <small class="muted">Значение: </small>
+                      <span class="factor-val-current">{{ formatFeatureValue(factor.feature, factor.input_value) }}</span>
+                    </div>
+                    <span :class="['factor-effect-badge', factor.direction]">
+                      <Icon v-if="factor.direction === 'positive'" name="TrendingUp" :size="14" />
+                      <Icon v-else-if="factor.direction === 'negative'" name="TrendingDown" :size="14" />
+                      <Icon v-else name="Info" :size="14" />
+                      {{
+                        factor.direction === "positive"
+                          ? `+${factor.logit_contribution.toFixed(2)} logit`
+                          : factor.direction === "negative"
+                            ? `${factor.logit_contribution.toFixed(2)} logit`
+                            : "нейтрально"
+                      }}
+                    </span>
+                  </div>
+                  <button class="factor-ask-btn" @click="askAiAboutScoring(`factor:${factor.feature}`)">
+                    Спросить AI об этом факторе <Icon name="ArrowRight" :size="12" />
+                  </button>
+                </div>
+              </div>
+
+              <!-- What-if Simulator -->
+              <div class="what-if-panel">
+                <div class="what-if-header">
+                  <div>
+                    <h4><Icon name="SlidersHorizontal" :size="18" /> Симулятор What-if («Что если?»)</h4>
+                    <small class="muted">Проверьте, как изменится вероятность при изменении условий без редактирования самой заявки</small>
+                  </div>
+                </div>
+                <div class="what-if-grid">
+                  <label>
+                    Годовая выручка, ₽
+                    <input v-model.number="whatIfForm.annual_revenue" type="number" min="100000" step="50000" />
+                  </label>
+                  <label>
+                    Запрашиваемая сумма, ₽
+                    <input v-model.number="whatIfForm.loan_amount" type="number" min="100000" step="50000" />
+                  </label>
+                  <label>
+                    Срок кредита, мес.
+                    <select v-model.number="whatIfForm.loan_term_months">
+                      <option :value="6">6 месяцев</option>
+                      <option :value="12">12 месяцев</option>
+                      <option :value="18">18 месяцев</option>
+                      <option :value="24">24 месяца</option>
+                      <option :value="36">36 месяцев</option>
+                      <option :value="48">48 месяцев</option>
+                      <option :value="60">60 месяцев</option>
+                    </select>
+                  </label>
+                  <label>
+                    Кредитная история
+                    <select v-model="whatIfForm.credit_history">
+                      <option value="good">Без просрочек</option>
+                      <option value="average">Были небольшие задержки</option>
+                      <option value="bad">Были просрочки</option>
+                      <option value="none">Нет кредитной истории</option>
+                    </select>
+                  </label>
+                  <label>
+                    Срок работы бизнеса, мес.
+                    <input v-model.number="whatIfForm.business_age_months" type="number" min="0" max="600" />
+                  </label>
+                  <label class="checkbox-label">
+                    <input v-model="whatIfForm.has_collateral" type="checkbox" />
+                    Есть имущество для залога
+                  </label>
+                </div>
+                <div class="what-if-actions">
+                  <button class="primary" :disabled="whatIfLoading" @click="runWhatIf">
+                    <Icon name="SlidersHorizontal" :size="16" /> {{ whatIfLoading ? "Считаем симуляцию…" : "Смоделировать What-if" }}
+                  </button>
+                </div>
+
+                <div v-if="whatIfError" class="alert warning" style="margin-top: 14px;">
+                  <Icon name="CircleHelp" />
+                  <p>{{ whatIfError }}</p>
+                </div>
+
+                <div v-if="whatIfResult" class="what-if-result-card">
+                  <div class="what-if-comparison">
+                    <div class="what-if-metric">
+                      <small>Текущая вероятность</small>
+                      <strong>{{ whatIfResult.original?.score?.display_percent?.toFixed(1) }}%</strong>
+                    </div>
+                    <div
+                      :class="[
+                        'what-if-delta',
+                        whatIfResult.delta_percentage_points > 0
+                          ? 'positive'
+                          : whatIfResult.delta_percentage_points < 0
+                            ? 'negative'
+                            : 'neutral',
+                      ]"
+                    >
+                      <Icon v-if="whatIfResult.delta_percentage_points > 0" name="TrendingUp" :size="20" />
+                      <Icon v-else-if="whatIfResult.delta_percentage_points < 0" name="TrendingDown" :size="20" />
+                      {{ whatIfResult.delta_percentage_points > 0 ? '+' : '' }}{{ whatIfResult.delta_percentage_points.toFixed(1) }} п.п.
+                    </div>
+                    <div class="what-if-metric">
+                      <small>Смоделированная</small>
+                      <strong style="color: #38bdf8;">{{ whatIfResult.alternative?.score?.display_percent?.toFixed(1) }}%</strong>
+                    </div>
+                  </div>
+                  <div class="scoring-ai-callout" style="margin-top: 8px;">
+                    <p class="small muted">
+                      {{ whatIfResult.limitations_warning || "Симуляция носит ориентировочный характер и не изменяет параметры вашей реальной заявки." }}
+                    </p>
+                    <button class="btn-ai-sparkle" @click="askAiAboutScoring('what_if')">
+                      <Icon name="Sparkles" :size="15" /> Объяснить симуляцию с AI
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </template>
           </section>
           <section v-if="current.decision" class="decision-section">
             <h3>Результат анализа</h3>
