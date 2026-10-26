@@ -164,6 +164,24 @@ async def test_internal_tool_names_are_hidden_from_user(chat_request: ChatReques
     assert "защищённый сервис проверки данных" in result.answer
 
 
+async def test_internal_tool_phrase_is_rewritten_naturally(chat_request: ChatRequest) -> None:
+    async def documents(_: ChatRequest, __: GetRequiredDocumentsArgs):
+        return {"documents": []}
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition("get_required_documents", "documents", GetRequiredDocumentsArgs, documents)
+    )
+    result = await ChatOrchestrator(
+        Settings(_env_file=None),
+        StaticLLM("Используйте инструмент get_required_documents."),
+        registry,
+    ).handle(chat_request.model_copy(update={"message": "Что делать дальше?"}))
+
+    assert "инструмент внутренний сервис" not in result.answer
+    assert "защищённый сервис проверки данных" in result.answer
+
+
 def test_routing_keeps_current_products_and_application_status_tools() -> None:
     assert requests_demo_knowledge(CHECKLIST_QUESTION)
     assert plan_tool_calls(CHECKLIST_QUESTION) == []

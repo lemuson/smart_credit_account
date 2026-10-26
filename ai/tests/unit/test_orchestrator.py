@@ -125,7 +125,7 @@ class ToolAwareLLM:
         return LLMReply(content="Ответ по учебному контексту.")
 
 
-async def test_rag_is_not_visible_when_first_tool_arguments_are_selected(
+async def test_dynamic_backend_tool_does_not_mix_rag_without_explicit_request(
     chat_request: ChatRequest,
 ) -> None:
     chat_request = chat_request.model_copy(update={"message": "Расскажи подробнее"})
@@ -139,7 +139,7 @@ async def test_rag_is_not_visible_when_first_tool_arguments_are_selected(
     orchestrator = ChatOrchestrator(Settings(_env_file=None), llm, registry, FakeRetriever())
     await orchestrator.handle(chat_request)
     assert all("retrieved_context" not in message.get("content", "") for message in llm.messages[0])
-    assert any("retrieved_context" in message.get("content", "") for message in llm.messages[1])
+    assert all("retrieved_context" not in message.get("content", "") for message in llm.messages[1])
 
 
 async def test_no_relevant_rag_context_suppresses_answer_from_general_knowledge(
@@ -298,9 +298,11 @@ async def test_scoring_answer_retries_when_llm_changes_score(
     class ScoringLLM:
         def __init__(self) -> None:
             self.calls = 0
+            self.messages: list[list[dict[str, Any]]] = []
 
         async def chat(self, messages: list[dict[str, Any]], tools=None) -> LLMReply:
             self.calls += 1
+            self.messages.append(messages.copy())
             if self.calls == 1:
                 return LLMReply(content="Ваша оценка 73.99%.")
             return LLMReply(
@@ -329,6 +331,10 @@ async def test_scoring_answer_retries_when_llm_changes_score(
     assert "73.99" not in result.answer
     assert "72,57%" in result.answer
     assert "синтетических" in result.answer
+    assert any(
+        "факторы объясни словами без числовых" in message.get("content", "")
+        for message in llm.messages[1]
+    )
 
 
 async def test_scoring_answer_adds_backend_synthetic_warning(
@@ -357,6 +363,40 @@ async def test_scoring_answer_adds_backend_synthetic_warning(
     assert "не является решением банка" in result.answer
 
 
+async def test_scoring_answer_uses_grounded_fallback_after_two_unsafe_drafts(
+    chat_request: ChatRequest,
+) -> None:
+    class UnsafeScoringLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages: list[dict[str, Any]], tools=None) -> LLMReply:
+            self.calls += 1
+            return LLMReply(content="Оценка округлена до 72,6%, прогноз — 99%.")
+
+    async def scoring(_: ChatRequest, __: GetScoringResultArgs):
+        return _scoring_result()
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition("get_scoring_result", "scoring", GetScoringResultArgs, scoring)
+    )
+    llm = UnsafeScoringLLM()
+    request = chat_request.model_copy(
+        update={"message": "ML-оценка 71000000-0000-0000-0000-000000000001"}
+    )
+
+    result = await ChatOrchestrator(Settings(_env_file=None), llm, registry).handle(request)
+
+    assert llm.calls == 2
+    assert "72,57%" in result.answer
+    assert "72,6%" not in result.answer
+    assert "99%" not in result.answer
+    assert "Положительное влияние" in result.answer
+    assert "не могу безопасно объяснить" not in result.answer
+    assert not ChatOrchestrator._has_ungrounded_number(result.answer, _scoring_result())
+
+
 def test_scoring_number_guard_handles_formats_and_rejects_rounding() -> None:
     payload = _scoring_result()
 
@@ -382,6 +422,33 @@ def test_scoring_number_guard_checks_what_if_delta_and_ignores_string_ids() -> N
         "Изменение составляет -11,5 процентного пункта.", payload
     )
     assert ChatOrchestrator._has_ungrounded_number("Новая оценка — 73000000%.", payload)
+
+
+def test_grounded_scoring_fallback_preserves_what_if_values() -> None:
+    payload = _scoring_result()
+    payload["selected_what_if"] = {
+        "original": {"score": {"display_percent": 72.57}},
+        "alternative": {"score": {"display_percent": 61.1}},
+        "delta_percentage_points": -11.47,
+    }
+
+    answer = ChatOrchestrator._render_scoring_answer(payload)
+
+    assert "72,57%" in answer
+    assert "61,1%" in answer
+    assert "-11,47 процентного пункта" in answer
+    assert not ChatOrchestrator._has_ungrounded_number(answer, payload)
+
+
+def test_scoring_number_guard_ignores_only_trusted_uuid_in_answer() -> None:
+    payload = _scoring_result()
+
+    assert not ChatOrchestrator._has_ungrounded_number(
+        "Оценка 71000000-0000-0000-0000-000000000001 — 72,57%.", payload
+    )
+    assert ChatOrchestrator._has_ungrounded_number(
+        "Оценка 99000000-0000-0000-0000-000000000009 — 72,57%.", payload
+    )
 
 
 async def test_numeric_rag_answer_is_not_subject_to_scoring_guard(
