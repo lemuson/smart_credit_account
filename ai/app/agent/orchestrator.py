@@ -107,6 +107,12 @@ class ChatOrchestrator:
                         "content": (
                             "Это сохранённый scoring result. Не вычисляй и не меняй ни одного "
                             "числа. Используй только числовые значения из tool result. "
+                            "В пользовательском объяснении основной оценки называй только "
+                            "score.display_percent, а факторы описывай качественно, без "
+                            "округления input_value, baseline_value и logit_contribution. "
+                            "Для What-if разрешены только original.score.display_percent, "
+                            "alternative.score.display_percent и точный "
+                            "delta_percentage_points. "
                             "Передай предупреждение о синтетических данных. Вклады факторов "
                             "выражены в logit, кроме явно названного delta_percentage_points."
                         ),
@@ -231,7 +237,11 @@ class ChatOrchestrator:
                                 "Предыдущий черновик изменил или добавил число. Перепиши ответ: "
                                 "разрешены только числовые литералы, дословно присутствующие в "
                                 "результате get_scoring_result. Числа из вопроса не являются "
-                                "источником истины. Ничего не вычисляй."
+                                "источником истины. Ничего не вычисляй. Укажи только сохранённый "
+                                "score.display_percent; факторы объясни словами без числовых "
+                                "input_value, baseline_value и logit_contribution. Для What-if "
+                                "можно назвать только оба display_percent и точный "
+                                "delta_percentage_points."
                             ),
                         }
                     )
@@ -239,11 +249,7 @@ class ChatOrchestrator:
                 if scoring_payload is not None and self._has_ungrounded_number(
                     reply.content, scoring_payload
                 ):
-                    answer = (
-                        "Сохранённый результат получен, но я не могу безопасно объяснить его без "
-                        "риска изменить числовые данные. Демонстрационная оценка основана на "
-                        "синтетических данных и не является решением банка или гарантией одобрения."
-                    )
+                    answer = self._render_scoring_answer(scoring_payload)
                     break
                 answer = reply.content.strip()
                 break
@@ -253,7 +259,7 @@ class ChatOrchestrator:
             demo_tool_used = demo_tool_used or any(
                 self._payload_is_demo(payload) for payload in tool_payloads
             )
-            if not rag_attempted and self.retriever is not None:
+            if not rag_attempted and self.retriever is not None and rag_requested:
                 rag_attempted = True
                 try:
                     rag_rows = await self.retriever.retrieve(retrieval_query)
@@ -269,6 +275,8 @@ class ChatOrchestrator:
                             ),
                         }
                     )
+            elif not rag_requested:
+                rag_attempted = True
         else:
             answer = (
                 "Не удалось завершить обработку: достигнут безопасный лимит вызовов инструментов. "
@@ -395,6 +403,12 @@ class ChatOrchestrator:
                 answer,
                 flags=re.IGNORECASE,
             )
+        answer = re.sub(
+            r"\b(?:инструмент|tool)\s+внутренний сервис\b",
+            "защищённый сервис проверки данных",
+            answer,
+            flags=re.IGNORECASE,
+        )
         return re.sub(
             r"\bBackend\s+Tools?(?:\s+внутренний сервис)?\b",
             "защищённый сервис проверки данных",
@@ -403,8 +417,50 @@ class ChatOrchestrator:
         )
 
     @staticmethod
+    def _render_scoring_answer(scoring_payload: dict[str, Any]) -> str:
+        def display(value: Any) -> str:
+            return str(value).replace(".", ",")
+
+        factors = scoring_payload["explanation"]["factors"]
+        grouped = {
+            direction: [
+                factor["display_name"] for factor in factors if factor["direction"] == direction
+            ]
+            for direction in ("positive", "negative", "neutral")
+        }
+        lines = [
+            f"Демонстрационная ML-оценка: {display(scoring_payload['score']['display_percent'])}%.",
+            "Факторы приведены по сохранённому результату модели без пересчёта чисел.",
+        ]
+        for direction, heading in (
+            ("positive", "Положительное влияние"),
+            ("negative", "Отрицательное влияние"),
+            ("neutral", "Нейтральное влияние"),
+        ):
+            if grouped[direction]:
+                lines.append(f"{heading}: {', '.join(grouped[direction])}.")
+
+        selected = scoring_payload.get("selected_what_if")
+        if selected is not None:
+            original = selected["original"]["score"]["display_percent"]
+            alternative = selected["alternative"]["score"]["display_percent"]
+            delta = selected["delta_percentage_points"]
+            lines.append(
+                "В сохранённом сценарии What-if оценка меняется "
+                f"с {display(original)}% до {display(alternative)}%; "
+                f"изменение — {display(delta)} процентного пункта."
+            )
+
+        lines.append(scoring_payload["limitations_warning"])
+        return "\n\n".join(lines)
+
+    @staticmethod
     def _has_ungrounded_number(answer: str, scoring_payload: dict[str, Any]) -> bool:
         number_pattern = re.compile(r"(?<![\w-])[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)(?:[eE][+-]?\d+)?")
+        uuid_pattern = re.compile(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            re.IGNORECASE,
+        )
 
         def parsed(value: str) -> Decimal | None:
             try:
@@ -429,9 +485,30 @@ class ChatOrchestrator:
                 return result
             return set()
 
+        def payload_uuids(value: Any) -> set[str]:
+            if isinstance(value, str) and uuid_pattern.fullmatch(value):
+                return {value}
+            if isinstance(value, dict):
+                result: set[str] = set()
+                for nested in value.values():
+                    result.update(payload_uuids(nested))
+                return result
+            if isinstance(value, list):
+                result = set()
+                for nested in value:
+                    result.update(payload_uuids(nested))
+                return result
+            return set()
+
+        numeric_claims = answer
+        # UUID segments are identifiers, not numeric claims. Mask only identifiers that came
+        # from the trusted scoring payload; a fabricated UUID must still fail closed.
+        for identifier in payload_uuids(scoring_payload):
+            numeric_claims = re.sub(re.escape(identifier), "", numeric_claims, flags=re.IGNORECASE)
+
         claims = {
             number
-            for match in number_pattern.finditer(answer)
+            for match in number_pattern.finditer(numeric_claims)
             if (number := parsed(match.group(0))) is not None
         }
         return not claims.issubset(payload_numbers(scoring_payload))
